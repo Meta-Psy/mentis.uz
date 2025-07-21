@@ -1,0 +1,8 @@
+fastapi
+sqlalchemy
+uvicorn
+python-multipart
+pytz
+argon2-cffi
+authx
+regex
