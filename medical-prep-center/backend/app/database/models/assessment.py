@@ -2,21 +2,14 @@ from sqlalchemy import (Float, DateTime, Column, Integer, ForeignKey, Text, Bool
                         Enum, JSON, String)
 from sqlalchemy.orm import relationship
 from app.database.base import Base
-from datetime import datetime
 from sqlalchemy import func
 import enum
-from enum import Enum as PyEnum
 from sqlalchemy.ext.mutable import MutableList
 
 class AttendanceType(enum.Enum):
     PRESENT = "present"
     ABSENT = "absent"
     LATE = "late"
-
-class TestType(PyEnum):
-    VERIFICATION = 'verification'
-    CURRENT = 'current'
-    FINAL = 'final'
 
 class CommentType(enum.Enum):
     POSITIVE = "positive"
@@ -130,7 +123,7 @@ class CurrentRating(Base):
     topic_id = Column(Integer, ForeignKey('topics.topic_id'))
     current_correct_answers = Column(Float)
     second_current_correct_answers = Column(Float)
-    last_updated = Column(DateTime, default=datetime.now())
+    last_updated = Column(DateTime, default=func.now())
     
     # Связи
     student = relationship("Student", back_populates="current_ratings")

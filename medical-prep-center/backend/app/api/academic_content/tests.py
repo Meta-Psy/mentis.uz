@@ -1,504 +1,791 @@
-from fastapi import APIRouter, Depends, HTTPException, status, Query
-from typing import List, Optional, Dict
-from app.database import get_db
-from app.services.content.test_service import *
-from app.services.assessment.grade_service import *
-from app.services.content.question_service import *
-from app.schemas.assessment.tests import *
-from app.core.dependencies import get_current_user
-from app.database.models.user import UserRole
-import json
-import redis
+from fastapi import APIRouter, HTTPException, status, Depends, Query, Path
+from sqlalchemy.ext.asyncio import AsyncSession
+from typing import List, Optional, Dict, Any
 from datetime import datetime
+import uuid
 
+# Импорты базы данных и моделей
+from app.database import get_db
+from app.database.models.assessment import TopicTest
+from app.database.models.academic import TestType
+
+
+# Импорты сервисов
+from app.services.assessment.grade_service import (
+    add_topic_test_db
+)
+
+from app.services.content.question_service import (
+    get_questions_by_topic_db,
+)
+from app.services.content.test_service import (
+    get_random_questions_by_topic_db,
+    get_questions_count_by_topic_db
+)
+from app.services.content.topic_service import (
+    find_topic_db,
+    get_topics_by_block_db
+)
+from app.services.content.section_service import (
+    get_sections_by_subject_db
+)
+from app.services.content.subject_service import (
+    get_all_subjects_db,
+)
+from app.services.auth.student_service import (
+    get_student_by_id_db
+)
+
+# Импорты схем
+from app.schemas.assessment.tests import (
+    TestInfo,
+    TestSession,
+    TestResult,
+    TestsListResponse,
+    TestSessionResponse,
+    TestResultResponse,
+    TestStatistics,
+    TestCounts,
+    TestsFilterRequest,
+    CreateTestSessionRequest,
+    SubmitAnswerRequest,
+    FinishTestRequest,
+    QuestionResponse,
+    TestAttempt,
+    TestsHealthResponse
+)
+
+# Создание роутера
 router = APIRouter()
-redis_client = redis.Redis(host='localhost', port=6379, db=0)
 
-# ===== ПОЛУЧЕНИЕ ТЕСТОВ =====
+# Временное хранилище активных сессий (в продакшене использовать Redis)
+active_sessions: Dict[str, Dict[str, Any]] = {}
 
-@router.get("/available", response_model=List[AvailableTestResponse])
-async def get_available_tests(
-    subject: Optional[str] = Query(None),
-    test_type: Optional[str] = Query(None, regex="^(training|control|dtm)$"),
-    current_user = Depends(get_current_user)
-):
-    """Получение доступных тестов для студента"""
-    if current_user.role != UserRole.STUDENT:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Доступ разрешен только студентам"
-        )
-    
-    # Здесь будет логика получения доступных тестов
-    # На основе прогресса студента, завершенных тем и т.д.
-    available_tests = []
-    
-    # Заглушка согласно frontend структуре
-    mock_tests = [
-        {
-            "id": 1,
-            "title": "Тема 21. Дыхательная система",
-            "subject": "biology",
-            "type": "training",
-            "questions_count": 50,
-            "estimated_time": 45,
-            "topic_id": 21,
-            "is_available": True,
-            "required_topics": [19, 20]
-        },
-        {
-            "id": 2,
-            "title": "Тема 25. Нервная система человека",
-            "subject": "biology", 
-            "type": "training",
-            "questions_count": 50,
-            "estimated_time": 45,
-            "topic_id": 25,
-            "is_available": True,
-            "required_topics": [21, 22, 23, 24]
-        }
-    ]
-    
-    return mock_tests
+# ===========================================
+# ПОЛУЧЕНИЕ СПИСКА ТЕСТОВ СТУДЕНТА
+# ===========================================
 
-@router.get("/by-category")
-async def get_tests_by_category(
-    category: str = Query(..., regex="^(topic|block|section|module|dtm)$"),
-    category_id: int = Query(...),
-    limit: int = Query(30, le=50),
-    current_user = Depends(get_current_user)
-):
-    """Получение тестов по категории (тема, блок, раздел, модуль, ДТМ)"""
-    if current_user.role != UserRole.STUDENT:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Доступ разрешен только студентам"
-        )
+@router.get("/student/{student_id}", 
+            response_model=TestsListResponse,
+            summary="Получить тесты студента",
+            description="Получение всех тестов студента с фильтрацией и статистикой")
+async def get_student_tests(
+    student_id: int = Path(..., gt=0, description="ID студента"),
+    subject_name: Optional[str] = Query(None, description="Фильтр по предмету"),
+    section_id: Optional[int] = Query(None, gt=0, description="Фильтр по разделу"),
+    status_filter: Optional[str] = Query(None, description="Фильтр по статусу"),
+    limit: int = Query(50, le=200, description="Лимит результатов"),
+    db: AsyncSession = Depends(get_db)
+) -> TestsListResponse:
+    """
+    Получение списка тестов студента
     
+    - **student_id**: ID студента
+    - **subject_name**: Фильтр по предмету (chemistry/biology)
+    - **section_id**: Фильтр по разделу (опционально)
+    - **status_filter**: Фильтр по статусу (completed/current/overdue)
+    - **limit**: Максимальное количество результатов
+    """
     try:
-        if category == "topic":
-            questions = get_random_questions_by_topic(category_id, limit)
-        elif category == "block":
-            questions = get_random_questions_by_block(category_id, limit)
-        elif category == "section":
-            questions = get_random_questions_by_section(category_id, limit)
-        elif category == "module":
-            questions = get_random_questions_by_modul(category_id, limit)
-        elif category == "dtm":
-            questions = get_mixed_questions_db(15, 15)  # По 15 химия/биология
-            
-        return {
-            "category": category,
-            "category_id": category_id,
-            "questions": questions,
-            "total_count": len(questions.get("mixed", questions)) if category == "dtm" else len(questions)
-        }
-    except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=str(e)
-        )
-
-# ===== УПРАВЛЕНИЕ СЕССИЕЙ ТЕСТА =====
-
-@router.post("/start", response_model=TestSessionResponse)
-async def start_test_session(
-    test_request: StartTestRequest,
-    current_user = Depends(get_current_user)
-):
-    """Начало новой сессии теста"""
-    if current_user.role != UserRole.STUDENT:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Доступ разрешен только студентам"
-        )
-    
-    try:
-        # Проверяем, нет ли уже активной сессии
-        session_key = f"test_session:{current_user.user_id}:{test_request.test_id}"
-        existing_session = redis_client.get(session_key)
+        # Проверяем существование студента
+        student = await get_student_by_id_db(db, student_id)
         
-        if existing_session:
-            return json.loads(existing_session)
+        # Получаем все предметы
+        subjects = await get_all_subjects_db(db)
+        subject_filter = None
         
-        # Получаем вопросы для теста
-        if test_request.category == "topic":
-            questions = get_random_questions_by_topic(test_request.category_id, test_request.questions_limit)
-        elif test_request.category == "block":
-            questions = get_random_questions_by_block(test_request.category_id, test_request.questions_limit)
-        elif test_request.category == "section":
-            questions = get_random_questions_by_section(test_request.category_id, test_request.questions_limit)
-        elif test_request.category == "module":
-            questions_data = get_random_questions_by_modul(test_request.category_id, test_request.questions_limit)
-            questions = questions_data.get("mixed", [])
+        if subject_name:
+            # Нормализуем название предмета
+            normalized_subject = subject_name.lower()
+            if normalized_subject in ['chemistry', 'химия']:
+                subject_filter = next((s for s in subjects if 'химия' in s.name.lower()), None)
+            elif normalized_subject in ['biology', 'биология']:
+                subject_filter = next((s for s in subjects if 'биология' in s.name.lower()), None)
+        
+        tests = []
+        
+        # Получаем разделы
+        if subject_filter:
+            sections = await get_sections_by_subject_db(db, subject_filter.subject_id)
         else:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Неверная категория теста"
-            )
+            sections = []
+            for subject in subjects:
+                try:
+                    subject_sections = await get_sections_by_subject_db(db, subject.subject_id)
+                    sections.extend(subject_sections)
+                except:
+                    continue
         
-        # Создаем сессию теста
-        session_data = {
-            "session_id": f"{current_user.user_id}_{test_request.test_id}_{datetime.now().timestamp()}",
-            "student_id": current_user.user_id,
-            "test_id": test_request.test_id,
-            "category": test_request.category,
-            "category_id": test_request.category_id,
-            "questions": [
-                {
-                    "id": q.question_id,
-                    "question": q.text,
-                    "options": [
-                        {"id": "A", "text": q.answer_1},
-                        {"id": "B", "text": q.answer_2},
-                        {"id": "C", "text": q.answer_3},
-                        {"id": "D", "text": q.answer_4}
-                    ]
-                } for q in questions
-            ],
-            "answers": {},
-            "start_time": datetime.now().isoformat(),
-            "time_elapsed": 0,
-            "is_completed": False
-        }
+        # Фильтруем по section_id если указан
+        if section_id:
+            sections = [s for s in sections if s.section_id == section_id]
         
-        # Сохраняем в Redis на 2 часа
-        redis_client.setex(session_key, 7200, json.dumps(session_data, default=str))
+        # Собираем тесты по темам
+        for section in sections[:limit]:  # Ограничиваем количество обрабатываемых разделов
+            try:
+                # Получаем блоки раздела
+                from app.database.models.academic import Block
+                from sqlalchemy import select
+                
+                blocks_result = await db.execute(
+                    select(Block).filter(Block.section_id == section.section_id)
+                )
+                blocks = blocks_result.scalars().all()
+                
+                for block in blocks:
+                    topics = await get_topics_by_block_db(db, block.block_id)
+                    
+                    for topic in topics:
+                        # Получаем статистику по теме
+                        questions_count = await get_questions_count_by_topic_db(db, topic.topic_id)
+                        
+                        if questions_count == 0:
+                            continue
+                        
+                        # Получаем попытки студента
+                        try:
+                            topic_tests_result = await db.execute(
+                                select(
+                                    TopicTest
+                                ).filter(
+                                    TopicTest.student_id == student_id,
+                                    TopicTest.topic_id == topic.topic_id
+                                )
+                            )
+                            topic_tests = topic_tests_result.scalars().all()
+                            
+                            training_attempts = [
+                                TestAttempt(
+                                    attempt_id=test.topic_test_id,
+                                    score_percentage=(test.correct_answers / questions_count) * 100,
+                                    correct_answers=test.correct_answers,
+                                    total_questions=test.question_count,
+                                    attempt_date=test.attempt_date,
+                                    time_spent=test.time_spent,
+                                    passed=test.correct_answers >= (questions_count * 0.6)
+                                ) for test in topic_tests
+                            ]
+                            
+                        except:
+                            training_attempts = []
+                        
+                        # Определяем статус теста
+                        status = "available"
+                        if training_attempts:
+                            best_score = max(att.score_percentage for att in training_attempts)
+                            if best_score >= 60:  # Если есть проходной балл
+                                status = "completed"
+                            else:
+                                status = "current"
+                        else:
+                            status = "current"
+                        
+                        # Фильтруем по статусу
+                        if status_filter and status != status_filter:
+                            continue
+                        
+                        test_info = TestInfo(
+                            topic_id=topic.topic_id,
+                            topic_name=topic.name,
+                            section_id=section.section_id,
+                            section_name=section.name,
+                            subject_id=section.subject_id,
+                            subject_name=section.subject.name,
+                            block_name=block.name,
+                            status=status,
+                            training_attempts=training_attempts,
+                            exam_attempts=[],  # Пока не реализовано
+                            questions_count=questions_count
+                        )
+                        
+                        tests.append(test_info)
+                        
+                        if len(tests) >= limit:
+                            break
+                    
+                    if len(tests) >= limit:
+                        break
+                        
+            except Exception as e:
+                continue
         
-        return TestSessionResponse(**session_data)
+        # Подсчитываем статистику
+        completed_count = len([t for t in tests if t.status == "completed"])
+        current_count = len([t for t in tests if t.status == "current"])
+        overdue_count = len([t for t in tests if t.status == "overdue"])
+        
+        statistics = TestStatistics(
+            student_id=student_id,
+            completed_tests=completed_count,
+            current_tests=current_count,
+            overdue_tests=overdue_count,
+            total_tests=len(tests)
+        )
+        
+        test_counts = TestCounts(
+            completed=completed_count,
+            current=current_count,
+            overdue=overdue_count,
+            available=len(tests)
+        )
+        
+        return TestsListResponse(
+            tests=tests[:limit],
+            total_count=len(tests),
+            statistics=statistics,
+            test_counts=test_counts
+        )
+        
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=str(e)
+            detail=f"Ошибка получения тестов: {str(e)}"
         )
 
-@router.get("/session/{test_id}", response_model=TestSessionResponse)
-async def get_test_session(
-    test_id: int,
-    current_user = Depends(get_current_user)
-):
-    """Получение текущей сессии теста"""
-    if current_user.role != UserRole.STUDENT:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Доступ разрешен только студентам"
-        )
-    
-    session_key = f"test_session:{current_user.user_id}:{test_id}"
-    session_data = redis_client.get(session_key)
-    
-    if not session_data:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Активная сессия теста не найдена"
-        )
-    
-    return json.loads(session_data)
+# ===========================================
+# СОЗДАНИЕ СЕССИИ ТЕСТИРОВАНИЯ
+# ===========================================
 
-@router.put("/session/{test_id}/save-progress")
-async def save_test_progress(
-    test_id: int,
-    progress_data: SaveProgressRequest,
-    current_user = Depends(get_current_user)
-):
-    """Сохранение прогресса теста"""
-    if current_user.role != UserRole.STUDENT:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Доступ разрешен только студентам"
-        )
-    
-    session_key = f"test_session:{current_user.user_id}:{test_id}"
-    session_data = redis_client.get(session_key)
-    
-    if not session_data:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Сессия теста не найдена"
-        )
-    
-    session = json.loads(session_data)
-    session["answers"] = progress_data.answers
-    session["time_elapsed"] = progress_data.time_elapsed
-    
-    # Обновляем сессию в Redis
-    redis_client.setex(session_key, 7200, json.dumps(session, default=str))
-    
-    return {"message": "Прогресс сохранен"}
-
-@router.post("/session/{test_id}/submit", response_model=TestResultResponse)
-async def submit_test(
-    test_id: int,
-    submission_data: SubmitTestRequest,
-    current_user = Depends(get_current_user)
-):
-    """Отправка теста на проверку и получение результатов"""
-    if current_user.role != UserRole.STUDENT:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Доступ разрешен только студентам"
-        )
+@router.post("/session", 
+             response_model=TestSessionResponse,
+             summary="Создать сессию тестирования",
+             description="Создание новой сессии для прохождения теста")
+async def create_test_session(
+    request: CreateTestSessionRequest,
+    db: AsyncSession = Depends(get_db)
+) -> TestSessionResponse:
+    """Создание сессии тестирования"""
     
     try:
-        session_key = f"test_session:{current_user.user_id}:{test_id}"
-        session_data = redis_client.get(session_key)
+        # Проверяем существование темы
+        topic = await find_topic_db(db, request.topic_id)
         
-        if not session_data:
+        # Получаем вопросы по теме
+        questions = await get_random_questions_by_topic_db(
+            db, 
+            request.topic_id, 
+            limit=request.questions_limit
+        )
+        
+        if not questions:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
-                detail="Сессия теста не найдена"
+                detail="Нет доступных вопросов для данной темы"
             )
         
-        session = json.loads(session_data)
+        # Создаем сессию
+        session_id = str(uuid.uuid4())
         
-        # Получаем правильные ответы
-        question_ids = [q["id"] for q in session["questions"]]
-        correct_answers = get_correct_answers_for_questions(question_ids)
+        # Конвертируем вопросы в нужный формат
+        question_responses = [
+            QuestionResponse(
+                question_id=q.question_id,
+                text=q.text,
+                answer_1=q.answer_1,
+                answer_2=q.answer_2,
+                answer_3=q.answer_3,
+                answer_4=q.answer_4,
+                correct_answers=q.correct_answers,
+                explanation=q.explanation,
+                category=q.category or [],
+                topic_id=q.topic_id
+            ) for q in questions
+        ]
         
-        # Проверяем ответы
-        total_questions = len(session["questions"])
+        # Определяем лимит времени
+        time_limit = None
+        if request.test_type == TestType.FINAL:
+            time_limit = 45  # 45 минут для экзамена
+        
+        session = TestSession(
+            session_id=session_id,
+            topic_id=request.topic_id,
+            test_type=request.test_type,
+            questions=question_responses,
+            current_question=0,
+            start_time=datetime.now(),
+            time_limit_minutes=time_limit,
+            is_active=True
+        )
+        
+        # Сохраняем сессию
+        active_sessions[session_id] = {
+            "session": session,
+            "answers": {},
+            "start_time": datetime.now()
+        }
+        
+        return TestSessionResponse(
+            session=session,
+            current_question=question_responses[0] if question_responses else None,
+            progress={
+                "current": 0,
+                "total": len(question_responses),
+                "percentage": 0
+            }
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Ошибка создания сессии: {str(e)}"
+        )
+
+# ===========================================
+# ПОЛУЧЕНИЕ ТЕКУЩЕГО ВОПРОСА
+# ===========================================
+
+@router.get("/session/{session_id}/question", 
+            response_model=QuestionResponse,
+            summary="Получить текущий вопрос",
+            description="Получение текущего вопроса в сессии")
+async def get_current_question(
+    session_id: str = Path(..., description="ID сессии")
+) -> QuestionResponse:
+    """Получение текущего вопроса"""
+    
+    if session_id not in active_sessions:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Сессия не найдена"
+        )
+    
+    session_data = active_sessions[session_id]
+    session = session_data["session"]
+    
+    if not session.is_active:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Сессия завершена"
+        )
+    
+    if session.current_question >= len(session.questions):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Все вопросы пройдены"
+        )
+    
+    return session.questions[session.current_question]
+
+# ===========================================
+# ОТПРАВКА ОТВЕТА
+# ===========================================
+
+@router.post("/session/{session_id}/answer",
+             summary="Отправить ответ",
+             description="Отправка ответа на вопрос")
+async def submit_answer(
+    session_id: str = Path(..., description="ID сессии"),
+    request: SubmitAnswerRequest = ...,
+) -> Dict[str, Any]:
+    """Отправка ответа на вопрос"""
+    
+    if session_id not in active_sessions:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Сессия не найдена"
+        )
+    
+    session_data = active_sessions[session_id]
+    session = session_data["session"]
+    
+    if not session.is_active:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Сессия завершена"
+        )
+    
+    # Сохраняем ответ
+    session_data["answers"][request.question_id] = request.answer_choice
+    
+    # Переходим к следующему вопросу
+    session.current_question += 1
+    
+    is_finished = session.current_question >= len(session.questions)
+    
+    return {
+        "status": "success",
+        "question_answered": request.question_id,
+        "current_question": session.current_question,
+        "total_questions": len(session.questions),
+        "is_finished": is_finished,
+        "progress_percentage": (session.current_question / len(session.questions)) * 100
+    }
+
+# ===========================================
+# ЗАВЕРШЕНИЕ ТЕСТА
+# ===========================================
+
+@router.post("/session/{session_id}/finish", 
+             response_model=TestResultResponse,
+             summary="Завершить тест",
+             description="Завершение теста и получение результатов")
+async def finish_test(
+    session_id: str = Path(..., description="ID сессии"),
+    request: FinishTestRequest = ...,
+    db: AsyncSession = Depends(get_db)
+) -> TestResultResponse:
+    """Завершение теста"""
+    
+    if session_id not in active_sessions:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Сессия не найдена"
+        )
+    
+    session_data = active_sessions[session_id]
+    session = session_data["session"]
+    
+    try:
+        # Обновляем ответы из запроса
+        session_data["answers"].update(request.answers)
+        
+        # Подсчитываем результаты
         correct_count = 0
-        incorrect_questions = []
+        total_questions = len(session.questions)
+        detailed_results = []
         
-        for question in session["questions"]:
-            question_id = question["id"]
-            student_answer = submission_data.answers.get(str(question_id))
-            correct_answer = correct_answers.get(question_id)
+        for question in session.questions:
+            user_answer = session_data["answers"].get(question.question_id, 0)
+            is_correct = user_answer == question.correct_answers
             
-            if student_answer == correct_answer:
+            if is_correct:
                 correct_count += 1
-            else:
-                incorrect_questions.append({
-                    "question_id": question_id,
-                    "student_answer": student_answer,
-                    "correct_answer": correct_answer
-                })
+            
+            detailed_results.append({
+                "question_id": question.question_id,
+                "question_text": question.text,
+                "user_answer": user_answer,
+                "correct_answer": question.correct_answers,
+                "is_correct": is_correct,
+                "explanation": question.explanation
+            })
+        
+        # Рассчитываем время
+        end_time = datetime.now()
+        time_spent = int((end_time - session.start_time).total_seconds())
+        score_percentage = (correct_count / total_questions) * 100
+        passed = score_percentage >= 60  # 60% проходной балл
+        
+        # Создаем результат
+        result = TestResult(
+            session_id=session_id,
+            topic_id=session.topic_id,
+            test_type=session.test_type,
+            score_percentage=score_percentage,
+            correct_answers=correct_count,
+            total_questions=total_questions,
+            time_spent_seconds=time_spent,
+            passed=passed,
+            answers=session_data["answers"]
+        )
         
         # Сохраняем результат в базу данных
-        if session["category"] == "topic":
-            saved_result = add_topic_test_db(
-                student_id=current_user.user_id,
-                topic_id=session["category_id"],
-                question_count=total_questions,
-                correct_answers=correct_count,
-                attempt_date=datetime.now(),
-                time_spent=f"{submission_data.time_elapsed} секунд"
-            )
-        elif session["category"] == "block":
-            saved_result = add_block_exam_db(
-                student_id=current_user.user_id,
-                block_id=session["category_id"],
-                subject_id=get_subject_by_block(session["category_id"]),
-                correct_answers=correct_count,
-                exam_date=datetime.now(),
-                time_spent=f"{submission_data.time_elapsed} секунд",
-                passed=correct_count >= (total_questions * 0.7)
-            )
+        try:
+            # Для тренировочных тестов сохраняем в TopicTest
+            if session.test_type == TestType.TRAINING:
+                await add_topic_test_db(
+                    db=db,
+                    student_id=1,  # TODO: получить из контекста
+                    topic_id=session.topic_id,
+                    question_count=total_questions,
+                    correct_answers=float(correct_count),
+                    attempt_date=end_time,
+                    time_spent=f"{time_spent}s"
+                )
+        except Exception as save_error:
+            # Логируем ошибку, но не прерываем выполнение
+            print(f"Ошибка сохранения результата: {save_error}")
         
-        # Получаем рейтинг студента
-        ranking = calculate_student_ranking(current_user.user_id, correct_count, session["category"])
+        # Формируем рекомендации
+        recommendations = []
+        if score_percentage < 40:
+            recommendations.append("Рекомендуем повторить теоретический материал")
+        elif score_percentage < 60:
+            recommendations.append("Неплохой результат, но есть возможности для улучшения")
+        elif score_percentage < 80:
+            recommendations.append("Хороший результат! Продолжайте в том же духе")
+        else:
+            recommendations.append("Отличный результат! Вы хорошо усвоили материал")
         
-        # Удаляем сессию из Redis
-        redis_client.delete(session_key)
+        # Завершаем сессию
+        session.is_active = False
+        session.end_time = end_time
+        
+        # Удаляем сессию из памяти через некоторое время
+        # В продакшене это должно быть обработано через задачи
         
         return TestResultResponse(
-            test_id=test_id,
-            student_id=current_user.user_id,
-            total_questions=total_questions,
-            correct_answers=correct_count,
-            incorrect_answers=total_questions - correct_count,
-            time_spent=submission_data.time_elapsed,
-            percentage=round((correct_count / total_questions) * 100, 1),
-            ranking=ranking,
-            question_results=create_question_results(session["questions"], submission_data.answers, correct_answers)
+            result=result,
+            detailed_results=detailed_results,
+            recommendations=recommendations
         )
-    
+        
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=str(e)
+            detail=f"Ошибка завершения теста: {str(e)}"
         )
+    finally:
+        # Помечаем сессию как неактивную
+        if session_id in active_sessions:
+            active_sessions[session_id]["session"].is_active = False
 
-# ===== РЕЗУЛЬТАТЫ ТЕСТОВ =====
+# ===========================================
+# ПОЛУЧЕНИЕ СТАТИСТИКИ СТУДЕНТА
+# ===========================================
 
-@router.get("/results/history", response_model=List[TestHistoryItem])
-async def get_test_history(
-    subject: Optional[str] = Query(None),
-    limit: int = Query(50, le=100),
-    offset: int = Query(0, ge=0),
-    current_user = Depends(get_current_user)
-):
-    """Получение истории тестов студента"""
-    if current_user.role != UserRole.STUDENT:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Доступ разрешен только студентам"
-        )
-    
-    # Получаем историю из разных типов тестов
-    topic_tests = get_student_topic_tests(current_user.user_id, subject, limit, offset)
-    block_exams = get_student_block_exams(current_user.user_id, subject, limit, offset)
-    section_exams = get_student_section_exams(current_user.user_id, subject, limit, offset)
-    
-    # Объединяем и сортируем по дате
-    all_tests = combine_and_sort_test_history(topic_tests, block_exams, section_exams)
-    
-    return all_tests
-
-@router.get("/results/{result_id}", response_model=DetailedTestResultResponse)
-async def get_test_result_details(
-    result_id: int,
-    result_type: str = Query(..., regex="^(topic|block|section|module|dtm)$"),
-    current_user = Depends(get_current_user)
-):
-    """Получение детальных результатов конкретного теста"""
-    if current_user.role != UserRole.STUDENT:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Доступ разрешен только студентам"
-        )
+@router.get("/student/{student_id}/statistics", 
+            response_model=TestStatistics,
+            summary="Получить статистику студента",
+            description="Получение детальной статистики тестов студента")
+async def get_student_statistics(
+    student_id: int = Path(..., gt=0, description="ID студента"),
+    db: AsyncSession = Depends(get_db)
+) -> TestStatistics:
+    """Получение статистики тестов студента"""
     
     try:
-        # Получаем детали теста в зависимости от типа
-        if result_type == "topic":
-            test_result = get_topic_test_details(result_id, current_user.user_id)
-        elif result_type == "block":
-            test_result = get_block_exam_details(result_id, current_user.user_id)
-        elif result_type == "section":
-            test_result = get_section_exam_details(result_id, current_user.user_id)
+        # Проверяем существование студента
+        student = await get_student_by_id_db(db, student_id)
         
-        # Получаем рейтинг для этого теста
-        ranking_data = get_test_ranking_data(result_id, result_type, current_user.user_id)
+        # Получаем все результаты тестов студента
+        from app.database.models.assessment import TopicTest
+        from sqlalchemy import select, func
         
-        return DetailedTestResultResponse(
-            **test_result,
-            ranking=ranking_data
+        # Основная статистика
+        total_tests_result = await db.execute(
+            select(func.count(TopicTest.topic_test_id))
+            .filter(TopicTest.student_id == student_id)
         )
-    
+        total_tests = total_tests_result.scalar() or 0
+        
+        # Средний балл
+        avg_score_result = await db.execute(
+            select(func.avg(TopicTest.correct_answers))
+            .filter(TopicTest.student_id == student_id)
+        )
+        avg_score = avg_score_result.scalar() or 0.0
+        
+        # Общее время (примерное, так как время в строковом формате)
+        total_time_hours = total_tests * 0.5  # Примерно 30 минут на тест
+        
+        statistics = TestStatistics(
+            student_id=student_id,
+            completed_tests=total_tests,
+            current_tests=0,  # Нужно дополнительно вычислить
+            overdue_tests=0,  # Нужно дополнительно вычислить
+            total_tests=total_tests,
+            average_score=float(avg_score) if avg_score else 0.0,
+            total_time_spent_hours=total_time_hours,
+            chemistry_completed=0,  # Нужно дополнительно вычислить
+            biology_completed=0   # Нужно дополнительно вычислить
+        )
+        
+        return statistics
+        
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=str(e)
+            detail=f"Ошибка получения статистики: {str(e)}"
         )
 
-# ===== РЕЙТИНГИ =====
+# ===========================================
+# ПОЛУЧЕНИЕ РЕЗУЛЬТАТОВ ТЕСТА
+# ===========================================
 
-@router.get("/rankings")
-async def get_test_rankings(
-    test_type: str = Query(..., regex="^(topic|block|section|overall)$"),
-    period: str = Query("all", regex="^(week|month|semester|all)$"),
-    current_user = Depends(get_current_user)
-):
-    """Получение рейтингов по тестам"""
-    if current_user.role != UserRole.STUDENT:
+@router.get("/result/{session_id}", 
+            response_model=TestResultResponse,
+            summary="Получить результат теста",
+            description="Получение результата завершенного теста")
+async def get_test_result(
+    session_id: str = Path(..., description="ID сессии")
+) -> TestResultResponse:
+    """Получение результата теста"""
+    
+    if session_id not in active_sessions:
         raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Доступ разрешен только студентам"
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Результат теста не найден"
         )
     
-    try:
-        rankings = calculate_rankings_by_type_and_period(test_type, period)
-        student_position = get_student_position_in_ranking(current_user.user_id, rankings)
-        
-        return {
-            "test_type": test_type,
-            "period": period,
-            "rankings": rankings,
-            "student_position": student_position
-        }
-    except Exception as e:
+    session_data = active_sessions[session_id]
+    session = session_data["session"]
+    
+    if session.is_active:
         raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=str(e)
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Тест еще не завершен"
         )
-
-# ===== ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ =====
-
-def get_correct_answers_for_questions(question_ids: List[int]) -> Dict[int, str]:
-    """Получение правильных ответов для списка вопросов"""
-    correct_answers = {}
-    for question_id in question_ids:
-        question = find_question_db(question_id)
-        # Преобразуем номер правильного ответа в букву
-        answer_map = {1: "A", 2: "B", 3: "C", 4: "D"}
-        correct_answers[question_id] = answer_map.get(question.correct_answers, "A")
-    return correct_answers
-
-def calculate_student_ranking(student_id: int, score: int, category: str) -> Dict[str, int]:
-    """Вычисление рейтинга студента"""
-    # Заглушка
-    return {"overall": 10, "group": 3}
-
-def create_question_results(questions: List[Dict], student_answers: Dict, correct_answers: Dict) -> List[Dict]:
-    """Создание детальных результатов по вопросам"""
-    results = []
-    for i, question in enumerate(questions):
-        question_id = question["id"]
-        student_answer = student_answers.get(str(question_id))
-        correct_answer = correct_answers.get(question_id)
+    
+    # Пересчитываем результаты (если они не были сохранены)
+    correct_count = 0
+    total_questions = len(session.questions)
+    detailed_results = []
+    
+    for question in session.questions:
+        user_answer = session_data["answers"].get(question.question_id, 0)
+        is_correct = user_answer == question.correct_answers
         
-        results.append({
-            "questionNumber": i + 1,
-            "questionText": question["question"],
-            "correctAnswer": correct_answer,
-            "studentAnswer": student_answer,
-            "isCorrect": student_answer == correct_answer,
-            "options": {opt["id"]: opt["text"] for opt in question["options"]}
+        if is_correct:
+            correct_count += 1
+        
+        detailed_results.append({
+            "question_id": question.question_id,
+            "question_text": question.text,
+            "user_answer": user_answer,
+            "correct_answer": question.correct_answers,
+            "is_correct": is_correct,
+            "explanation": question.explanation
         })
     
-    return results
+    # Рассчитываем время
+    time_spent = int((session.end_time - session.start_time).total_seconds()) if session.end_time else 0
+    score_percentage = (correct_count / total_questions) * 100
+    passed = score_percentage >= 60
+    
+    result = TestResult(
+        session_id=session_id,
+        topic_id=session.topic_id,
+        test_type=session.test_type,
+        score_percentage=score_percentage,
+        correct_answers=correct_count,
+        total_questions=total_questions,
+        time_spent_seconds=time_spent,
+        passed=passed,
+        answers=session_data["answers"]
+    )
+    
+    return TestResultResponse(
+        result=result,
+        detailed_results=detailed_results,
+        recommendations=[]
+    )
 
-def get_subject_by_block(block_id: int) -> int:
-    """Получение ID предмета по ID блока"""
-    # Заглушка
-    return 1
+# ===========================================
+# ПОЛУЧЕНИЕ АКТИВНЫХ СЕССИЙ
+# ===========================================
 
-def get_student_topic_tests(student_id: int, subject: Optional[str], limit: int, offset: int):
-    """Получение тестов по темам для студента"""
-    # Заглушка
-    return []
+@router.get("/sessions/active",
+            summary="Получить активные сессии",
+            description="Получение списка активных сессий тестирования")
+async def get_active_sessions() -> Dict[str, Any]:
+    """Получение активных сессий"""
+    
+    active_count = len([s for s in active_sessions.values() if s["session"].is_active])
+    total_count = len(active_sessions)
+    
+    return {
+        "active_sessions": active_count,
+        "total_sessions": total_count,
+        "sessions": [
+            {
+                "session_id": session_id,
+                "topic_id": data["session"].topic_id,
+                "test_type": data["session"].test_type,
+                "is_active": data["session"].is_active,
+                "start_time": data["session"].start_time,
+                "current_question": data["session"].current_question,
+                "total_questions": len(data["session"].questions)
+            }
+            for session_id, data in active_sessions.items()
+        ]
+    }
 
-def get_student_block_exams(student_id: int, subject: Optional[str], limit: int, offset: int):
-    """Получение экзаменов по блокам для студента"""
-    # Заглушка  
-    return []
+# ===========================================
+# УДАЛЕНИЕ СЕССИИ
+# ===========================================
 
-def get_student_section_exams(student_id: int, subject: Optional[str], limit: int, offset: int):
-    """Получение экзаменов по разделам для студента"""
-    # Заглушка
-    return []
+@router.delete("/session/{session_id}",
+               summary="Удалить сессию",
+               description="Принудительное удаление сессии тестирования")
+async def delete_session(
+    session_id: str = Path(..., description="ID сессии")
+) -> Dict[str, str]:
+    """Удаление сессии"""
+    
+    if session_id not in active_sessions:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Сессия не найдена"
+        )
+    
+    del active_sessions[session_id]
+    
+    return {"status": "success", "message": "Сессия удалена"}
 
-def combine_and_sort_test_history(topic_tests, block_exams, section_exams):
-    """Объединение и сортировка истории тестов"""
-    # Заглушка
-    return []
+# ===========================================
+# ПОЛУЧЕНИЕ ВОПРОСОВ ПО ТЕМЕ
+# ===========================================
 
-def get_topic_test_details(result_id: int, student_id: int):
-    """Получение деталей теста по теме"""
-    # Заглушка
-    return {}
+@router.get("/topic/{topic_id}/questions",
+            response_model=List[QuestionResponse],
+            summary="Получить вопросы по теме",
+            description="Получение всех вопросов по конкретной теме")
+async def get_topic_questions(
+    topic_id: int = Path(..., gt=0, description="ID темы"),
+    limit: int = Query(30, le=100, description="Лимит вопросов"),
+    random: bool = Query(False, description="Случайная выборка"),
+    db: AsyncSession = Depends(get_db)
+) -> List[QuestionResponse]:
+    """Получение вопросов по теме"""
+    
+    try:
+        # Проверяем существование темы
+        topic = await find_topic_db(db, topic_id)
+        
+        if random:
+            questions = await get_random_questions_by_topic_db(db, topic_id, limit)
+        else:
+            all_questions = await get_questions_by_topic_db(db, topic_id)
+            questions = all_questions[:limit]
+        
+        return [
+            QuestionResponse(
+                question_id=q.question_id,
+                text=q.text,
+                answer_1=q.answer_1,
+                answer_2=q.answer_2,
+                answer_3=q.answer_3,
+                answer_4=q.answer_4,
+                correct_answers=q.correct_answers,
+                explanation=q.explanation,
+                category=q.category or [],
+                topic_id=q.topic_id
+            ) for q in questions
+        ]
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Ошибка получения вопросов: {str(e)}"
+        )
 
-def get_block_exam_details(result_id: int, student_id: int):
-    """Получение деталей экзамена по блоку"""
-    # Заглушка
-    return {}
+# ===========================================
+# ПРОВЕРКА ЗДОРОВЬЯ API
+# ===========================================
 
-def get_section_exam_details(result_id: int, student_id: int):
-    """Получение деталей экзамена по разделу"""
-    # Заглушка
-    return {}
-
-def get_test_ranking_data(result_id: int, result_type: str, student_id: int):
-    """Получение данных рейтинга для теста"""
-    # Заглушка
-    return {"overall": [], "group": []}
-
-def calculate_rankings_by_type_and_period(test_type: str, period: str):
-    """Вычисление рейтингов по типу и периоду"""
-    # Заглушка
-    return []
-
-def get_student_position_in_ranking(student_id: int, rankings):
-    """Получение позиции студента в рейтинге"""
-    # Заглушка
-    return {"overall": 10, "group": 3}
+@router.get("/health",
+            response_model=TestsHealthResponse,
+            summary="Проверка здоровья API",
+            description="Проверка работоспособности API тестирования")
+async def health_check() -> TestsHealthResponse:
+    """Проверка здоровья API тестирования"""
+    
+    active_count = len([s for s in active_sessions.values() if s["session"].is_active])
+    
+    return TestsHealthResponse(
+        status="healthy",
+        service="tests-api",
+        version="1.0.0",
+        timestamp=datetime.now(),
+        active_sessions=active_count
+    )

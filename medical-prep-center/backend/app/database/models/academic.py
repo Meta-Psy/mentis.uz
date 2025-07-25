@@ -1,11 +1,22 @@
 from sqlalchemy import Column, Integer, ForeignKey, String, Text, DateTime, Boolean, Float, Enum
 from sqlalchemy.orm import relationship
+from sqlalchemy.sql import func
 from app.database.base import Base
+from datetime import datetime
 import enum
 
 class UniversityType(enum.Enum):
     STATE = "state"
     PRIVATE = "private"
+
+class MaterialFileType(enum.Enum):
+    BOOK = "book"
+    TEST_BOOK = "test_book"
+
+class TestType(enum.Enum):
+    TRAINING = "training"
+    CONTROL = "control"
+    FINAL = "final"
 
 # === УЧЕБНАЯ СТРУКТУРА ===
 
@@ -37,6 +48,8 @@ class Section(Base):
     blocks = relationship("Block", back_populates="section")
     section_exams = relationship("SectionExam", back_populates="section", cascade="all, delete-orphan")
     section_materials = relationship('SectionMaterial', back_populates="section", cascade="all, delete-orphan")
+    material_files = relationship("MaterialFile", back_populates="section", cascade="all, delete-orphan")
+
 
 
 class SectionMaterial(Base):
@@ -48,6 +61,17 @@ class SectionMaterial(Base):
     # Связи
     section = relationship("Section", back_populates="section_materials")
 
+class SectionMaterialsView(Base):
+    __tablename__ = 'v_section_materials'
+    
+    section_id = Column(Integer, primary_key=True)
+    section_name = Column(String(200))
+    section_order = Column(Integer)
+    section_description = Column(Text)
+    subject_name = Column(String(200))
+    books_count = Column(Integer)
+    test_books_count = Column(Integer)
+    topics_count = Column(Integer)
 
 class Block(Base):
     __tablename__ = 'blocks'
@@ -69,6 +93,7 @@ class Topic(Base):
     block_id = Column(Integer, ForeignKey('blocks.block_id'))
     name = Column(String(200))
     homework = Column(Text)
+    video_url = Column(String, nullable=True)
     number = Column(Integer)
     additional_material = Column(Text, nullable=True) 
     
@@ -79,7 +104,57 @@ class Topic(Base):
     attendances = relationship("Attendance", back_populates="topic")
     current_ratings = relationship("CurrentRating", back_populates="topic")
     group_progress = relationship("GroupProgress", back_populates="topic")
+    test_mappings = relationship("TopicTestMapping", back_populates="topic", cascade="all, delete-orphan")
 
+
+class TopicDetailsView(Base):
+    __tablename__ = 'v_topic_details'
+    
+    topic_id = Column(Integer, primary_key=True)
+    topic_name = Column(String(200))
+    homework = Column(Text)
+    topic_number = Column(Integer)
+    additional_material = Column(Text)
+    video_url = Column(String(500))
+    block_name = Column(String(200))
+    section_name = Column(String(200))
+    section_id = Column(Integer)
+    subject_name = Column(String(200))
+    subject_id = Column(Integer)
+    questions_count = Column(Integer)
+    tests_count = Column(Integer)
+    
+    
+class MaterialFile(Base):
+    __tablename__ = 'material_files'
+    
+    file_id = Column(Integer, primary_key=True, autoincrement=True)
+    section_id = Column(Integer, ForeignKey('sections.section_id'))
+    file_type = Column(Enum(MaterialFileType))
+    title = Column(String(300))
+    author = Column(String(200))
+    file_size = Column(String(50))
+    file_format = Column(String(10), default='PDF')
+    download_url = Column(String(500), nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=datetime.now())
+    
+    # Связи
+    section = relationship("Section", back_populates="material_files")
+    
+    
+class TopicTestMapping(Base):
+    __tablename__ = 'topic_tests_mapping'
+    
+    mapping_id = Column(Integer, primary_key=True, autoincrement=True)
+    topic_id = Column(Integer, ForeignKey('topics.topic_id'))
+    test_id = Column(Integer)
+    test_type = Column(Enum(TestType), default=TestType.TRAINING)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    
+    # Связи
+    topic = relationship("Topic", back_populates="test_mappings")
+    
 
 class Group(Base):
     __tablename__ = 'groups'

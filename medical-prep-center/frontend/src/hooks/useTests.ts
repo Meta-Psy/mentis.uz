@@ -1,0 +1,535 @@
+import { useState, useEffect, useCallback, useRef } from 'react';
+import { 
+  testsAPI, 
+  TestsAPIError,
+  TEST_STATUSES,
+  SUBJECTS
+} from '../services/api/tests';
+import type { 
+  TestInfo,
+  TestStatistics,
+  TestCounts,
+  TestSession,
+  TestResult,
+  QuestionData,
+  TestType,
+  TestStatus,
+  Subject
+} from '../services/api/tests';
+
+// ========== ТИПЫ ==========
+
+interface UseTestsPageState {
+  // Состояние фильтров
+  selectedSubject: Subject;
+  selectedModule: number | 'all';
+  selectedFilter: TestStatus;
+  
+  // Данные
+  tests: TestInfo[];
+  statistics: TestStatistics | null;
+  testCounts: TestCounts;
+  
+  // Состояние загрузки
+  isLoading: boolean;
+  isValidating: boolean;
+  hasError: string | null;
+  
+  // Обработчики
+  handleSubjectChange: (subject: Subject) => void;
+  handleModuleChange: (moduleId: number | 'all') => void;
+  handleFilterChange: (filter: TestStatus) => void;
+  handleRefresh: () => void;
+  
+  // Сессия тестирования
+  testSession: UseTestSessionReturn;
+}
+
+interface UseTestSessionState {
+  session: TestSession | null;
+  currentQuestion: QuestionData | null;
+  answers: Record<number, number>;
+  timeLeft: number | null;
+  progress: {
+    current: number;
+    total: number;
+    percentage: number;
+  };
+  loading: boolean;
+  error: string | null;
+}
+
+interface UseTestSessionReturn extends UseTestSessionState {
+  createSession: (topicId: number, testType: TestType) => Promise<TestSession | null>;
+  submitAnswer: (questionId: number, answer: number) => Promise<boolean>;
+  finishTest: () => Promise<TestResult | null>;
+  clearSession: () => void;
+  getNextQuestion: () => Promise<QuestionData | null>;
+}
+
+// ========== ОСНОВНОЙ ХУК ==========
+
+export const useTestsPage = (studentId: number): UseTestsPageState => {
+  // Состояние фильтров
+  const [selectedSubject, setSelectedSubject] = useState<Subject>(SUBJECTS.CHEMISTRY);
+  const [selectedModule, setSelectedModule] = useState<number | 'all'>('all');
+  const [selectedFilter, setSelectedFilter] = useState<TestStatus>(TEST_STATUSES.CURRENT);
+  
+  // Данные
+  const [tests, setTests] = useState<TestInfo[]>([]);
+  const [statistics, setStatistics] = useState<TestStatistics | null>(null);
+  const [testCounts, setTestCounts] = useState<TestCounts>({
+    completed: 0,
+    current: 0,
+    overdue: 0,
+    available: 0
+  });
+  
+  // Состояние загрузки
+  const [isLoading, setIsLoading] = useState(false);
+  const [isValidating, setIsValidating] = useState(false);
+  const [hasError, setHasError] = useState<string | null>(null);
+  
+  // Кэш для избежания повторных запросов
+  const cacheRef = useRef<Map<string, { data: any; timestamp: number }>>(new Map());
+  const CACHE_DURATION = 5 * 60 * 1000; // 5 минут
+  
+  // Сессия тестирования
+  const testSession = useTestSession();
+
+  // Функция получения тестов
+  const fetchTests = useCallback(async (force = false) => {
+    if (!studentId || studentId <= 0) {
+      setHasError('Некорректный ID студента');
+      return;
+    }
+
+    const cacheKey = `tests-${studentId}-${selectedSubject}-${selectedModule}-${selectedFilter}`;
+    const cached = cacheRef.current.get(cacheKey);
+    const now = Date.now();
+
+    // Проверяем кэш
+    if (!force && cached && (now - cached.timestamp) < CACHE_DURATION) {
+      const { tests: cachedTests, statistics: cachedStats, test_counts } = cached.data;
+      setTests(cachedTests);
+      setStatistics(cachedStats);
+      setTestCounts(test_counts);
+      return;
+    }
+
+    try {
+      setIsLoading(true);
+      setHasError(null);
+
+      const filters: any = {
+        subject_name: selectedSubject,
+        status_filter: selectedFilter,
+        limit: 100
+      };
+
+      // Добавляем фильтр по модулю если выбран конкретный
+      if (selectedModule !== 'all') {
+        filters.section_id = selectedModule;
+      }
+
+      const response = await testsAPI.getStudentTests(studentId, filters);
+      
+      setTests(response.tests);
+      setStatistics(response.statistics);
+      setTestCounts(response.test_counts);
+
+      // Кэшируем результат
+      cacheRef.current.set(cacheKey, {
+        data: response,
+        timestamp: now
+      });
+
+    } catch (error) {
+      console.error('Ошибка загрузки тестов:', error);
+      
+      if (error instanceof TestsAPIError) {
+        setHasError(error.message);
+      } else {
+        setHasError('Произошла ошибка при загрузке тестов');
+      }
+      
+      // В случае ошибки показываем пустые данные
+      setTests([]);
+      setStatistics(null);
+      setTestCounts({
+        completed: 0,
+        current: 0,
+        overdue: 0,
+        available: 0
+      });
+    } finally {
+      setIsLoading(false);
+    }
+  }, [studentId, selectedSubject, selectedModule, selectedFilter]);
+
+  // Функция валидации (фоновое обновление)
+  const validateData = useCallback(async () => {
+    if (isLoading) return;
+    
+    try {
+      setIsValidating(true);
+      await fetchTests(true);
+    } catch (error) {
+      // Валидация не должна показывать ошибки пользователю
+      console.warn('Ошибка валидации:', error);
+    } finally {
+      setIsValidating(false);
+    }
+  }, [fetchTests, isLoading]);
+
+  // Обработчики
+  const handleSubjectChange = useCallback((subject: Subject) => {
+    setSelectedSubject(subject);
+  }, []);
+
+  const handleModuleChange = useCallback((moduleId: number | 'all') => {
+    setSelectedModule(moduleId);
+  }, []);
+
+  const handleFilterChange = useCallback((filter: TestStatus) => {
+    setSelectedFilter(filter);
+  }, []);
+
+  const handleRefresh = useCallback(() => {
+    fetchTests(true);
+  }, [fetchTests]);
+
+  // Эффект для загрузки данных при изменении фильтров
+  useEffect(() => {
+    fetchTests();
+  }, [fetchTests]);
+
+  // Эффект для периодической валидации
+  useEffect(() => {
+    const interval = setInterval(validateData, 30000); // Каждые 30 секунд
+    return () => clearInterval(interval);
+  }, [validateData]);
+
+  // Очистка кэша при размонтировании
+  useEffect(() => {
+    return () => {
+      cacheRef.current.clear();
+    };
+  }, []);
+
+  return {
+    // Состояние
+    selectedSubject,
+    selectedModule,
+    selectedFilter,
+    
+    // Данные
+    tests,
+    statistics,
+    testCounts,
+    
+    // Состояние загрузки
+    isLoading,
+    isValidating,
+    hasError,
+    
+    // Обработчики
+    handleSubjectChange,
+    handleModuleChange,
+    handleFilterChange,
+    handleRefresh,
+    
+    // Сессия тестирования
+    testSession
+  };
+};
+
+// ========== ХУК ДЛЯ СЕССИИ ТЕСТИРОВАНИЯ ==========
+
+export const useTestSession = (): UseTestSessionReturn => {
+  const [state, setState] = useState<UseTestSessionState>({
+    session: null,
+    currentQuestion: null,
+    answers: {},
+    timeLeft: null,
+    progress: {
+      current: 0,
+      total: 0,
+      percentage: 0
+    },
+    loading: false,
+    error: null
+  });
+
+  const timerRef = useRef<NodeJS.Timeout | null>(null);
+
+  // Таймер для отслеживания времени
+  const startTimer = useCallback((timeLimit: number) => {
+    if (timerRef.current) {
+      clearInterval(timerRef.current);
+    }
+
+    const endTime = Date.now() + (timeLimit * 60 * 1000);
+    
+    timerRef.current = setInterval(() => {
+      const remaining = Math.max(0, endTime - Date.now());
+      const remainingSeconds = Math.floor(remaining / 1000);
+      
+      setState(prev => ({
+        ...prev,
+        timeLeft: remainingSeconds
+      }));
+
+      if (remaining <= 0) {
+        clearInterval(timerRef.current!);
+        // Автоматически завершаем тест при истечении времени
+        finishTest();
+      }
+    }, 1000);
+  }, []);
+
+  // Создание сессии
+  const createSession = useCallback(async (
+    topicId: number, 
+    testType: TestType
+  ): Promise<TestSession | null> => {
+    try {
+      setState(prev => ({ ...prev, loading: true, error: null }));
+
+      const response = await testsAPI.createTestSession(topicId, testType, 30);
+      const { session, current_question, progress } = response;
+
+      setState(prev => ({
+        ...prev,
+        session,
+        currentQuestion: current_question,
+        answers: {},
+        progress,
+        loading: false
+      }));
+
+      // Запускаем таймер если есть лимит времени
+      if (session.time_limit_minutes) {
+        startTimer(session.time_limit_minutes);
+      }
+
+      return session;
+    } catch (error) {
+      console.error('Ошибка создания сессии:', error);
+      
+      const errorMessage = error instanceof TestsAPIError 
+        ? error.message 
+        : 'Ошибка создания сессии тестирования';
+      
+      setState(prev => ({
+        ...prev,
+        loading: false,
+        error: errorMessage
+      }));
+      
+      return null;
+    }
+  }, [startTimer]);
+
+  // Получение следующего вопроса
+  const getNextQuestion = useCallback(async (): Promise<QuestionData | null> => {
+    if (!state.session?.session_id) return null;
+
+    try {
+      const question = await testsAPI.getCurrentQuestion(state.session.session_id);
+      
+      setState(prev => ({
+        ...prev,
+        currentQuestion: question
+      }));
+
+      return question;
+    } catch (error) {
+      console.error('Ошибка получения вопроса:', error);
+      return null;
+    }
+  }, [state.session?.session_id]);
+
+  // Отправка ответа
+  const submitAnswer = useCallback(async (
+    questionId: number, 
+    answer: number
+  ): Promise<boolean> => {
+    if (!state.session?.session_id) return false;
+
+    try {
+      const response = await testsAPI.submitAnswer(
+        state.session.session_id, 
+        questionId, 
+        answer
+      );
+
+      // Обновляем состояние
+      setState(prev => ({
+        ...prev,
+        answers: {
+          ...prev.answers,
+          [questionId]: answer
+        },
+        progress: {
+          current: response.current_question,
+          total: response.total_questions,
+          percentage: response.progress_percentage
+        }
+      }));
+
+      // Если тест не завершен, получаем следующий вопрос
+      if (!response.is_finished) {
+        await getNextQuestion();
+      }
+
+      return true;
+    } catch (error) {
+      console.error('Ошибка отправки ответа:', error);
+      
+      const errorMessage = error instanceof TestsAPIError 
+        ? error.message 
+        : 'Ошибка отправки ответа';
+      
+      setState(prev => ({
+        ...prev,
+        error: errorMessage
+      }));
+      
+      return false;
+    }
+  }, [state.session?.session_id, getNextQuestion]);
+
+  // Завершение теста
+  const finishTest = useCallback(async (): Promise<TestResult | null> => {
+    if (!state.session?.session_id) return null;
+
+    try {
+      setState(prev => ({ ...prev, loading: true }));
+
+      // Останавливаем таймер
+      if (timerRef.current) {
+        clearInterval(timerRef.current);
+        timerRef.current = null;
+      }
+
+      const response = await testsAPI.finishTest(state.session.session_id, state.answers);
+      
+      // Очищаем сессию
+      setState(prev => ({
+        ...prev,
+        session: null,
+        currentQuestion: null,
+        answers: {},
+        timeLeft: null,
+        progress: {
+          current: 0,
+          total: 0,
+          percentage: 0
+        },
+        loading: false
+      }));
+
+      return response.result;
+    } catch (error) {
+      console.error('Ошибка завершения теста:', error);
+      
+      const errorMessage = error instanceof TestsAPIError 
+        ? error.message 
+        : 'Ошибка завершения теста';
+      
+      setState(prev => ({
+        ...prev,
+        loading: false,
+        error: errorMessage
+      }));
+      
+      return null;
+    }
+  }, [state.session?.session_id, state.answers]);
+
+  // Очистка сессии
+  const clearSession = useCallback(() => {
+    if (timerRef.current) {
+      clearInterval(timerRef.current);
+      timerRef.current = null;
+    }
+
+    setState({
+      session: null,
+      currentQuestion: null,
+      answers: {},
+      timeLeft: null,
+      progress: {
+        current: 0,
+        total: 0,
+        percentage: 0
+      },
+      loading: false,
+      error: null
+    });
+  }, []);
+
+  // Очистка при размонтировании
+  useEffect(() => {
+    return () => {
+      if (timerRef.current) {
+        clearInterval(timerRef.current);
+      }
+    };
+  }, []);
+
+  return {
+    ...state,
+    createSession,
+    submitAnswer,
+    finishTest,
+    clearSession,
+    getNextQuestion
+  };
+};
+
+// ========== ХУК ДЛЯ СТАТИСТИКИ ==========
+
+export const useTestStatistics = (studentId: number) => {
+  const [statistics, setStatistics] = useState<TestStatistics | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const fetchStatistics = useCallback(async () => {
+    if (!studentId || studentId <= 0) return;
+
+    try {
+      setLoading(true);
+      setError(null);
+      
+      const stats = await testsAPI.getStudentStatistics(studentId);
+      setStatistics(stats);
+    } catch (error) {
+      console.error('Ошибка загрузки статистики:', error);
+      
+      const errorMessage = error instanceof TestsAPIError 
+        ? error.message 
+        : 'Ошибка загрузки статистики';
+      
+      setError(errorMessage);
+    } finally {
+      setLoading(false);
+    }
+  }, [studentId]);
+
+  useEffect(() => {
+    fetchStatistics();
+  }, [fetchStatistics]);
+
+  return {
+    statistics,
+    loading,
+    error,
+    refresh: fetchStatistics
+  };
+};
+
+// ========== ЭКСПОРТ ==========
+
+export default useTestsPage;

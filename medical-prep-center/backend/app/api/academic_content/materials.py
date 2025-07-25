@@ -1,486 +1,330 @@
-from fastapi import APIRouter, Depends, HTTPException, status, Query, UploadFile, File
-from fastapi.responses import FileResponse
-from sqlalchemy.orm import Session
+from fastapi import APIRouter, HTTPException, status, Depends, Query, Path
+from sqlalchemy.ext.asyncio import AsyncSession
 from typing import List, Optional
-from app.database import get_db
-from app.services.content.subject_service import *
-from app.services.content.section_service import *
-from app.services.content.topic_service import *
-from app.services.content.module_service import *
-from app.schemas.content.materials import *
-from app.core.dependencies import get_current_user
-from app.database.models.user import UserRole
-import os
-from pathlib import Path
 
+# Импорты базы данных и моделей
+from app.database import get_db
+from app.database.models.academic import MaterialFileType
+
+# Импорты сервисов
+from app.services.content.topic_service import (
+    get_topic_with_details_db,
+    add_material_file_db,
+    search_materials_db
+)
+from app.services.content.subject_service import (
+    get_subject_materials_db, 
+    get_materials_statistics_db
+)
+from app.services.content.section_service import get_section_with_materials_db
+
+# Импорты схем
+from app.schemas.assessment.materials import (
+    MaterialsResponseModel,
+    SectionResponse,
+    TopicDetailResponse,
+    MaterialFileCreate,
+    SearchResult,
+    MaterialsStatistics
+)
+
+# Создание роутера
 router = APIRouter()
 
-# Директория для хранения файлов
-UPLOAD_DIR = Path("uploads/materials")
-UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
+# ===========================================
+# ПОЛУЧЕНИЕ МАТЕРИАЛОВ ПО ПРЕДМЕТУ
+# ===========================================
 
-# ===== ПОЛУЧЕНИЕ МАТЕРИАЛОВ ПО ПРЕДМЕТАМ =====
-
-@router.get("/subjects/{subject_name}")
-async def get_subject_materials(
-    subject_name: str,
-    module_id: Optional[int] = Query(None),
-    current_user = Depends(get_current_user)
-):
-    """Получение материалов по предмету"""
+@router.get("/{subject_name}", 
+            response_model=MaterialsResponseModel,
+            summary="Получить материалы предмета",
+            description="Получение всех материалов по предмету (chemistry/biology)")
+async def get_materials_by_subject(
+    subject_name: str = Path(..., description="Название предмета"),
+    db: AsyncSession = Depends(get_db)
+) -> MaterialsResponseModel:
+    """
+    Получение всех материалов по предмету
+    
+    - **subject_name**: Название предмета (chemistry или biology)
+    
+    Возвращает структуру материалов со всеми разделами, темами и файлами
+    """
     try:
-        # Проверяем, что предмет существует
-        if subject_name.lower() not in ["chemistry", "biology", "химия", "биология"]:
+        # Валидация названия предмета
+        valid_subjects = ['chemistry', 'biology', 'химия', 'биология']
+        if subject_name.lower() not in valid_subjects:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Неверное название предмета"
+                detail=f"Недопустимое название предмета. Используйте: chemistry или biology"
             )
         
-        # Получаем структуру материалов согласно frontend
-        materials_structure = {
-            "modules": []
+        # Получение данных
+        subject_data = await get_subject_materials_db(db, subject_name)
+        
+        # Формирование ответа в нужном формате
+        materials_data = {
+            subject_name.lower(): subject_data
         }
         
-        # Получаем модули
-        if subject_name.lower() in ["chemistry", "химия"]:
-            modules = get_modules_by_subject_db("химия")
-        else:
-            modules = get_modules_by_subject_db("биология")
+        return MaterialsResponseModel(materials=materials_data)
         
-        for module in modules:
-            if module_id and module.modul_id != module_id:
-                continue
-                
-            module_data = {
-                "id": module.modul_id,
-                "name": module.name or f"Модуль {module.order_number}",
-                "books": get_module_books(module.modul_id, "main"),
-                "testBooks": get_module_books(module.modul_id, "test"),
-                "topics": get_module_topics_with_materials(module.modul_id, subject_name)
-            }
-            materials_structure["modules"].append(module_data)
-        
-        return materials_structure
-    
-    except HTTPException as e:
-        raise e
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=str(e)
+            detail=f"Внутренняя ошибка сервера: {str(e)}"
         )
 
-def get_module_books(module_id: int, book_type: str) -> List[dict]:
-    """Получение книг модуля"""
-    # Заглушка - в реальности будет получать из базы данных
-    if book_type == "main":
-        return [
-            {
-                "id": f"{module_id}_book_1",
-                "title": "Основы химии",
-                "author": "Петров А.И.",
-                "size": "15.2 МБ",
-                "format": "PDF",
-                "download_url": f"/api/v1/materials/download/{module_id}_book_1"
-            }
-        ]
-    else:  # test books
-        return [
-            {
-                "id": f"{module_id}_test_1",
-                "title": "Сборник тестов",
-                "author": "Иванова М.К.",
-                "size": "8.4 МБ", 
-                "format": "PDF",
-                "download_url": f"/api/v1/materials/download/{module_id}_test_1"
-            }
-        ]
+# ===========================================
+# ПОЛУЧЕНИЕ МАТЕРИАЛОВ РАЗДЕЛА
+# ===========================================
 
-def get_module_topics_with_materials(module_id: int, subject: str) -> List[dict]:
-    """Получение тем модуля с материалами"""
-    # Заглушка согласно frontend структуре
-    return [
-        {
-            "id": 1,
-            "title": "Тема 3. Строение атома",
-            "homework": [
-                "Решить тесты по теме 3",
-                "Химия 10 кл. Выучить параграфы 4 - 7",
-                "Конспект по строению атома"
-            ],
-            "videoUrl": "https://www.youtube.com/embed/dQw4w9WgXcQ",
-            "testId": 103
-        }
-    ]
-
-# ===== РАБОТА С ТЕМАМИ =====
-
-@router.get("/topics/{topic_id}")
-async def get_topic_materials(
-    topic_id: int,
-    current_user = Depends(get_current_user)
-):
-    """Получение материалов конкретной темы"""
-    try:
-        # Здесь будет логика получения материалов темы из topic_service
-        topic_data = {
-            "id": topic_id,
-            "title": f"Тема {topic_id}",
-            "homework": [
-                "Пример домашнего задания 1",
-                "Пример домашнего задания 2"
-            ],
-            "videoUrl": "https://www.youtube.com/embed/example",
-            "testId": topic_id + 100,
-            "additional_materials": []
-        }
-        
-        return topic_data
-    
-    except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=str(e)
-        )
-
-@router.put("/topics/{topic_id}/homework")
-async def update_topic_homework(
-    topic_id: int,
-    homework_update: UpdateHomeworkRequest,
-    current_user = Depends(get_current_user)
-):
-    """Обновление домашнего задания темы (только для учителей)"""
-    if current_user.role not in [UserRole.TEACHER, UserRole.ADMIN]:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Доступ разрешен только учителям и администраторам"
-        )
-    
-    try:
-        # Логика обновления домашнего задания через topic_service
-        # edit_topic_db(topic_id, homework=homework_update.homework)
-        
-        return {"message": "Домашнее задание обновлено"}
-    
-    except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=str(e)
-        )
-
-# ===== ЗАГРУЗКА И СКАЧИВАНИЕ ФАЙЛОВ =====
-
-@router.post("/upload")
-async def upload_material_file(
-    file: UploadFile = File(...),
-    category: str = Query(..., regex="^(book|test|video|other)$"),
-    module_id: Optional[int] = Query(None),
-    topic_id: Optional[int] = Query(None),
-    current_user = Depends(get_current_user)
-):
-    """Загрузка файла материала (только для учителей и администраторов)"""
-    if current_user.role not in [UserRole.TEACHER, UserRole.ADMIN]:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Доступ разрешен только учителям и администраторам"
-        )
-    
-    try:
-        # Проверяем тип файла
-        allowed_extensions = {".pdf", ".doc", ".docx", ".mp4", ".avi", ".mkv"}
-        file_extension = Path(file.filename).suffix.lower()
-        
-        if file_extension not in allowed_extensions:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Неподдерживаемый тип файла"
-            )
-        
-        # Создаем уникальное имя файла
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        safe_filename = f"{timestamp}_{file.filename}"
-        file_path = UPLOAD_DIR / safe_filename
-        
-        # Сохраняем файл
-        with open(file_path, "wb") as buffer:
-            content = await file.read()
-            buffer.write(content)
-        
-        # Сохраняем информацию о файле в базе данных
-        file_info = {
-            "filename": safe_filename,
-            "original_name": file.filename,
-            "size": len(content),
-            "category": category,
-            "module_id": module_id,
-            "topic_id": topic_id,
-            "uploaded_by": current_user.user_id,
-            "upload_date": datetime.now()
-        }
-        
-        # Здесь должна быть логика сохранения в базу данных
-        # save_material_file_info(file_info)
-        
-        return {
-            "message": "Файл успешно загружен",
-            "file_id": safe_filename,
-            "download_url": f"/api/v1/materials/download/{safe_filename}"
-        }
-    
-    except HTTPException as e:
-        raise e
-    except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Ошибка при загрузке файла: {str(e)}"
-        )
-
-@router.get("/download/{file_id}")
-async def download_material_file(
-    file_id: str,
-    current_user = Depends(get_current_user)
-):
-    """Скачивание файла материала"""
-    try:
-        file_path = UPLOAD_DIR / file_id
-        
-        if not file_path.exists():
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="Файл не найден"
-            )
-        
-        # Получаем оригинальное имя файла из базы данных
-        # file_info = get_material_file_info(file_id)
-        # original_name = file_info.original_name if file_info else file_id
-        
-        return FileResponse(
-            path=file_path,
-            filename=file_id,  # В реальности использовать original_name
-            media_type='application/octet-stream'
-        )
-    
-    except HTTPException as e:
-        raise e
-    except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=str(e)
-        )
-
-@router.delete("/files/{file_id}")
-async def delete_material_file(
-    file_id: str,
-    current_user = Depends(get_current_user)
-):
-    """Удаление файла материала (только для учителей и администраторов)"""
-    if current_user.role not in [UserRole.TEACHER, UserRole.ADMIN]:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Доступ разрешен только учителям и администраторам"
-        )
-    
-    try:
-        file_path = UPLOAD_DIR / file_id
-        
-        if file_path.exists():
-            os.remove(file_path)
-        
-        # Удаляем информацию из базы данных
-        # delete_material_file_info(file_id)
-        
-        return {"message": "Файл успешно удален"}
-    
-    except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=str(e)
-        )
-
-# ===== УПРАВЛЕНИЕ ВИДЕОУРОКАМИ =====
-
-@router.post("/videos")
-async def add_video_lesson(
-    video_data: AddVideoLessonRequest,
-    current_user = Depends(get_current_user)
-):
-    """Добавление видеоурока к теме (только для учителей и администраторов)"""
-    if current_user.role not in [UserRole.TEACHER, UserRole.ADMIN]:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Доступ разрешен только учителям и администраторам"
-        )
-    
-    try:
-        # Логика добавления видеоурока через topic_service
-        # update_topic_video(video_data.topic_id, video_data.video_url)
-        
-        return {"message": "Видеоурок добавлен"}
-    
-    except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=str(e)
-        )
-
-@router.put("/videos/{topic_id}")
-async def update_video_lesson(
-    topic_id: int,
-    video_update: UpdateVideoLessonRequest,
-    current_user = Depends(get_current_user)
-):
-    """Обновление видеоурока темы (только для учителей и администраторов)"""
-    if current_user.role not in [UserRole.TEACHER, UserRole.ADMIN]:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Доступ разрешен только учителям и администраторам"
-        )
-    
-    try:
-        # Логика обновления видеоурока
-        # update_topic_video(topic_id, video_update.video_url)
-        
-        return {"message": "Видеоурок обновлен"}
-    
-    except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=str(e)
-        )
-
-# ===== МАТЕРИАЛЫ ДЛЯ РАЗДЕЛОВ =====
-
-@router.get("/sections/{section_id}/materials")
+@router.get("/section/{section_id}", 
+            response_model=SectionResponse,
+            summary="Получить материалы раздела",
+            description="Получение всех материалов конкретного раздела")
 async def get_section_materials(
     section_id: int,
-    current_user = Depends(get_current_user)
-):
-    """Получение материалов раздела"""
-    try:
-        # Логика получения материалов раздела через section_service
-        section = find_section_db(section_id)
-        
-        # Получаем связанные материалы
-        section_materials = {
-            "section_id": section_id,
-            "section_name": section.name,
-            "materials": get_section_material_links(section_id)
-        }
-        
-        return section_materials
+    db: AsyncSession = Depends(get_db)
+) -> SectionResponse:
+    """
+    Получение материалов конкретного раздела
     
+    - **section_id**: ID раздела
+    
+    Возвращает все файлы, темы и информацию о разделе
+    """
+    try:
+        if section_id <= 0:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="ID раздела должен быть положительным числом"
+            )
+        
+        section_data = await get_section_with_materials_db(db, section_id)
+        return SectionResponse(**section_data)
+        
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=str(e)
+            detail=f"Ошибка получения материалов раздела: {str(e)}"
         )
 
-def get_section_material_links(section_id: int) -> List[dict]:
-    """Получение ссылок на материалы раздела"""
-    # Заглушка - в реальности получать из SectionMaterial модели
-    return [
-        {
-            "id": 1,
-            "title": "Дополнительные материалы",
-            "links": [
-                "https://example.com/material1",
-                "https://example.com/material2"
-            ]
-        }
-    ]
+# ===========================================
+# ПОЛУЧЕНИЕ ДЕТАЛЕЙ ТЕМЫ
+# ===========================================
 
-@router.post("/sections/{section_id}/materials")
-async def add_section_materials(
+@router.get("/topic/{topic_id}", 
+            response_model=TopicDetailResponse,
+            summary="Получить детали темы",
+            description="Получение подробной информации о теме")
+async def get_topic_details(
+    topic_id: int,
+    db: AsyncSession = Depends(get_db)
+) -> TopicDetailResponse:
+    """
+    Получение деталей конкретной темы
+    
+    - **topic_id**: ID темы
+    
+    Возвращает все детали темы включая домашнее задание, видео и тесты
+    """
+    try:
+        if topic_id <= 0:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="ID темы должен быть положительным числом"
+            )
+        
+        topic_data = await get_topic_with_details_db(db, topic_id)
+        return TopicDetailResponse(**topic_data)
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Ошибка получения темы: {str(e)}"
+        )
+
+# ===========================================
+# ДОБАВЛЕНИЕ ФАЙЛА К РАЗДЕЛУ
+# ===========================================
+
+@router.post("/section/{section_id}/files",
+             summary="Добавить файл к разделу",
+             description="Добавление нового файла материала к разделу")
+async def add_section_file(
     section_id: int,
-    materials_data: AddSectionMaterialsRequest,
-    current_user = Depends(get_current_user)
+    file_data: MaterialFileCreate,
+    db: AsyncSession = Depends(get_db)
 ):
-    """Добавление материалов к разделу (только для учителей и администраторов)"""
-    if current_user.role not in [UserRole.TEACHER, UserRole.ADMIN]:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Доступ разрешен только учителям и администраторам"
-        )
+    """
+    Добавление файла к разделу
     
+    - **section_id**: ID раздела
+    - **file_data**: Данные файла (название, автор, размер, тип)
+    
+    Возвращает подтверждение создания файла
+    """
     try:
-        # Логика добавления материалов через section_service
-        # add_section_material_links(section_id, materials_data.links)
+        if section_id <= 0:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="ID раздела должен быть положительным числом"
+            )
         
-        return {"message": "Материалы добавлены к разделу"}
-    
-    except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=str(e)
-        )
-
-# ===== ПОИСК МАТЕРИАЛОВ =====
-
-@router.get("/search")
-async def search_materials(
-    query: str = Query(..., min_length=3),
-    material_type: Optional[str] = Query(None, regex="^(book|test|video|all)$"),
-    subject: Optional[str] = Query(None),
-    current_user = Depends(get_current_user)
-):
-    """Поиск материалов по запросу"""
-    try:
-        # Логика поиска материалов
-        search_results = {
-            "query": query,
-            "results": [
-                {
-                    "id": 1,
-                    "title": f"Результат поиска для '{query}'",
-                    "type": "book",
-                    "subject": "chemistry",
-                    "description": "Описание найденного материала"
-                }
-            ],
-            "total_found": 1
-        }
+        # Валидация типа файла
+        if file_data.file_type not in ['book', 'test_book']:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Тип файла должен быть 'book' или 'test_book'"
+            )
         
-        return search_results
-    
-    except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=str(e)
+        # Создание файла
+        material_file = await add_material_file_db(
+            db=db, 
+            section_id=section_id,
+            file_type=MaterialFileType(file_data.file_type),
+            title=file_data.title,
+            author=file_data.author,
+            file_size=file_data.size,
+            file_format=file_data.format,
+            download_url=file_data.url
         )
-
-# ===== СТАТИСТИКА ИСПОЛЬЗОВАНИЯ =====
-
-@router.get("/statistics/usage")
-async def get_materials_usage_statistics(
-    period: str = Query("month", regex="^(week|month|semester|year)$"),
-    current_user = Depends(get_current_user)
-):
-    """Получение статистики использования материалов"""
-    if current_user.role not in [UserRole.TEACHER, UserRole.ADMIN]:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Доступ разрешен только учителям и администраторам"
-        )
-    
-    try:
-        # Статистика использования материалов
-        usage_stats = {
-            "period": period,
-            "total_downloads": 150,
-            "most_popular": [
-                {"title": "Общая химия", "downloads": 45},
-                {"title": "Биология клетки", "downloads": 38}
-            ],
-            "by_subject": {
-                "chemistry": 85,
-                "biology": 65
+        
+        return {
+            "status": "success", 
+            "message": "Файл успешно добавлен",
+            "file_id": material_file.file_id,
+            "data": {
+                "id": material_file.file_id,
+                "title": material_file.title,
+                "author": material_file.author,
+                "size": material_file.file_size,
+                "format": material_file.file_format
             }
         }
         
-        return usage_stats
-    
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=str(e)
+            detail=f"Ошибка добавления файла: {str(e)}"
         )
+
+# ===========================================
+# ПОИСК ПО МАТЕРИАЛАМ
+# ===========================================
+
+@router.get("/search", 
+            response_model=List[SearchResult],
+            summary="Поиск материалов",
+            description="Поиск по всем материалам с фильтрацией")
+async def search_materials(
+    query: str = Query(..., min_length=2, max_length=100, description="Поисковый запрос"),
+    subject_filter: Optional[str] = Query(None, description="Фильтр по предмету"),
+    section_filter: Optional[int] = Query(None, description="Фильтр по разделу"),
+    limit: Optional[int] = Query(20, le=100, description="Лимит результатов"),
+    db: AsyncSession = Depends(get_db)
+) -> List[SearchResult]:
+    """
+    Поиск по материалам
+    
+    - **query**: Поисковый запрос (минимум 2 символа)
+    - **subject_filter**: Фильтр по предмету (опционально)
+    - **section_filter**: Фильтр по разделу (опционально)
+    - **limit**: Максимальное количество результатов (по умолчанию 20)
+    
+    Возвращает список найденных материалов
+    """
+    try:
+        # Валидация параметров
+        if not query or len(query.strip()) < 2:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Поисковый запрос должен содержать минимум 2 символа"
+            )
+        
+        if subject_filter and subject_filter.lower() not in ['chemistry', 'biology', 'химия', 'биология']:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Недопустимый фильтр по предмету"
+            )
+        
+        if section_filter and section_filter <= 0:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="ID раздела должен быть положительным числом"
+            )
+        
+        # Выполнение поиска
+        results = await search_materials_db(
+            db=db, 
+            query=query.strip(), 
+            subject_filter=subject_filter, 
+            section_filter=section_filter
+        )
+        
+        # Ограничение результатов
+        limited_results = results[:limit] if limit else results
+        
+        return [SearchResult(**result) for result in limited_results]
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Ошибка поиска: {str(e)}"
+        )
+
+# ===========================================
+# СТАТИСТИКА МАТЕРИАЛОВ
+# ===========================================
+
+@router.get("/statistics", 
+            response_model=MaterialsStatistics,
+            summary="Статистика материалов",
+            description="Получение общей статистики по материалам")
+async def get_statistics(
+    db: AsyncSession = Depends(get_db)
+) -> MaterialsStatistics:
+    """
+    Получение статистики материалов
+    
+    Возвращает общую информацию о количестве предметов, разделов, тем и файлов
+    """
+    try:
+        stats = await get_materials_statistics_db(db)
+        return MaterialsStatistics(**stats)
+        
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Ошибка получения статистики: {str(e)}"
+        )
+
+# ===========================================
+# ПРОВЕРКА ЗДОРОВЬЯ API
+# ===========================================
+
+@router.get("/health",
+            summary="Проверка здоровья API",
+            description="Простая проверка работоспособности API материалов")
+async def health_check():
+    """
+    Проверка здоровья API материалов
+    """
+    return {
+        "status": "healthy",
+        "service": "materials-api",
+        "timestamp": "2024-01-01T00:00:00Z",
+        "version": "1.0.0"
+    }
+

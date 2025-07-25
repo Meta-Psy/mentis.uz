@@ -1,31 +1,37 @@
-from sqlalchemy.engine import create_engine
-from sqlalchemy.orm import declarative_base, sessionmaker
-from sqlalchemy import event
-# формат и название нашей базы данных
-SQLALCHEMY_DATABASE_URI = "sqlite:///data.db"
-# вариант postgres
-# SQLALCHEMY_DATABASE_URI = "postgresql://postgres:admin@localhost/quiz61"
-#                            ^ формат     ^ юзер   ^пароль ^хост  ^ название бд
-# создаем движок
-engine = create_engine(SQLALCHEMY_DATABASE_URI)
-# создаем генератор сессий
-SessionLocal = sessionmaker(bind=engine)
-# создаем класс для наследования в моделях
-Base = declarative_base()
-# настройка управления связями в таблице
-@event.listens_for(engine, "connect")
-def set_pragma(dbapi_connection, connection_record):
-    cursor = dbapi_connection.cursor()
-    cursor.execute("PRAGMA foreign_keys=ON;")
-    cursor.close()
+from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
+from typing import AsyncGenerator
+from app.config.database import settings
+from sqlalchemy.exc import SQLAlchemyError
+from app.database.base import Base 
 
-# создаем функцию-генератор сессий
-def get_db():
-    db = SessionLocal()
+DATABASE_URL = settings.database_url
+
+async_engine = create_async_engine(
+    DATABASE_URL,
+    echo=settings.debug,
+    future=True,
+)
+
+AsyncSessionLocal = async_sessionmaker(
+    bind=async_engine,
+    class_=AsyncSession,
+    autoflush=False,
+    autocommit=False,
+)
+
+async def get_db() -> AsyncGenerator[AsyncSession, None]:
+    async with AsyncSessionLocal() as session:
+        yield session
+        
+        
+async def init_db():
     try:
-        yield db
-    except Exception:
-        db.rollback()
+        async with async_engine.begin() as conn:
+            await conn.run_sync(Base.metadata.create_all)
+    except SQLAlchemyError as e:
+        print(f"Ошибка инициализации базы: {e}")
         raise
-    finally:
-        db.close()
+
+# Функция для закрытия соединений
+async def close_db():
+    await async_engine.dispose()

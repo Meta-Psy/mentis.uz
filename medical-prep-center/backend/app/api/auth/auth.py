@@ -3,8 +3,8 @@ from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from sqlalchemy.orm import Session
 from app.database import get_db
 from app.services.auth.user_service import *
-from app.schemas.auth import UserCreate, UserResponse, Token, UserLogin
-from app.core.security import create_access_token, verify_password, get_password_hash
+from app.schemas.base import UserCreate, UserResponse, Token
+from app.services.auth.auth_service import AuthService
 from datetime import timedelta
 
 router = APIRouter()
@@ -18,7 +18,7 @@ async def register_user(
     """Регистрация нового пользователя"""
     try:
         # Хешируем пароль
-        hashed_password = get_password_hash(user_data.password)
+        hashed_password = AuthService.get_password_hash(user_data.password)
         
         # Создаем пользователя через сервис
         new_user = create_user_db(
@@ -57,7 +57,7 @@ async def login(
         user = get_user_by_phone_db(form_data.username)
         
         # Проверяем пароль
-        if not verify_password(form_data.password, user.password):
+        if not AuthService.verify_password(form_data.password, user.password):
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="Неверный номер телефона или пароль",
@@ -69,7 +69,7 @@ async def login(
         
         # Создаем токен
         access_token_expires = timedelta(days=30)
-        access_token = create_access_token(
+        access_token = AuthService.create_access_token(
             data={"sub": str(user.user_id), "role": user.role.value},
             expires_delta=access_token_expires
         )
@@ -90,7 +90,7 @@ async def login(
 
 @router.get("/me", response_model=UserResponse)
 async def get_current_user(
-    current_user: User = Depends(get_current_user_dependency),
+    current_user: User = Depends(AuthService.get_current_user_dependency),
     db: Session = Depends(get_db)
 ):
     """Получение информации о текущем пользователе"""
@@ -98,11 +98,11 @@ async def get_current_user(
 
 @router.post("/refresh-token", response_model=Token)
 async def refresh_access_token(
-    current_user: User = Depends(get_current_user_dependency)
+    current_user: User = Depends(AuthService.get_current_user_dependency)
 ):
     """Обновление токена доступа"""
     access_token_expires = timedelta(days=30)
-    access_token = create_access_token(
+    access_token = AuthService.create_access_token(
         data={"sub": str(current_user.user_id), "role": current_user.role.value},
         expires_delta=access_token_expires
     )

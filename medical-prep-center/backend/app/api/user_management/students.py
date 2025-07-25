@@ -9,6 +9,7 @@ from app.services.assessment.comment_service import *
 from app.schemas.auth.student import *
 from app.core.dependencies import get_current_user, require_roles
 from app.database.models.user import UserRole
+from app.schemas import StudentProfileResponse, StudentResponse, StudentUpdate, TestHistoryResponse, CommentResponse
 
 router = APIRouter()
 
@@ -77,70 +78,6 @@ async def update_student_profile(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=str(e)
         )
-
-# ===== МАТЕРИАЛЫ =====
-
-@router.get("/materials/{subject}")
-async def get_subject_materials(
-    subject: str,
-    module_id: Optional[int] = Query(None),
-    current_user = Depends(get_current_user)
-):
-    """Получение учебных материалов по предмету"""
-    # Здесь будет логика получения материалов
-    # Пока возвращаем заглушку согласно frontend структуре
-    
-    materials_structure = {
-        "chemistry": {
-            "modules": [
-                {
-                    "id": 1,
-                    "name": "Модуль 1",
-                    "books": [
-                        {
-                            "id": 1,
-                            "title": "Общая химия. Основы",
-                            "author": "Петров А.И.",
-                            "size": "15.2 МБ",
-                            "format": "PDF",
-                            "download_url": "/api/v1/files/download/1"
-                        }
-                    ],
-                    "testBooks": [
-                        {
-                            "id": 1,
-                            "title": "Сборник тестов по общей химии",
-                            "author": "Иванова М.К.",
-                            "size": "8.4 МБ",
-                            "format": "PDF",
-                            "download_url": "/api/v1/files/download/2"
-                        }
-                    ],
-                    "topics": [
-                        {
-                            "id": 1,
-                            "title": "Тема 3. Строение атома",
-                            "homework": [
-                                "Решить тесты по теме 3",
-                                "Химия 10 кл. Выучить параграфы 4 - 7",
-                                "Конспект по строению атома"
-                            ],
-                            "videoUrl": "https://www.youtube.com/embed/dQw4w9WgXcQ",
-                            "testId": 103
-                        }
-                    ]
-                }
-            ]
-        }
-    }
-    
-    if subject not in materials_structure:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Предмет не найден"
-        )
-    
-    return materials_structure[subject]
 
 # ===== ТЕСТЫ И ЭКЗАМЕНЫ =====
 

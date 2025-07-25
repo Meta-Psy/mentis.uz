@@ -73,7 +73,7 @@ class Student(Base):
     student_id = Column(Integer, ForeignKey('users.user_id'), primary_key=True)
     direction = Column(String(200))
     student_status = Column(Enum(StudentStatus), default=StudentStatus.ACTIVE)
-    group_id = Column(Integer, ForeignKey('groups.group_id'), primary_key = True)
+    group_id = Column(Integer, ForeignKey('groups.group_id'))
     last_login = Column(DateTime)
     goal = Column(String, nullable=True)
     # Связи

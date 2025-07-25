@@ -228,7 +228,7 @@ class CurrentRatingResponse(CurrentRatingBase, BaseResponse):
 
 class StartTestRequest(BaseModel):
     test_id: int
-    category: str = Field(..., regex="^(topic|block|section|module|dtm)$")
+    category: str = Field(..., pattern="^(topic|block|section|module|dtm)$")
     category_id: int
     questions_limit: int = Field(30, ge=10, le=50)
 
