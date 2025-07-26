@@ -11,10 +11,10 @@ import pytz
 tashkent_tz = pytz.timezone("Asia/Tashkent")
 
 class UserRole(enum.Enum):
-    STUDENT = "student"
-    PARENT = "parent"
-    TEACHER = "teacher"
-    ADMIN = "admin"
+    STUDENT = "STUDENT"
+    PARENT = "PARENT"
+    TEACHER = "TEACHER"
+    ADMIN = "ADMIN"
 
 class StudentStatus(enum.Enum):
     ACTIVE = "active"

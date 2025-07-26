@@ -1,5 +1,6 @@
 # app/schemas/base.py
 from pydantic import BaseModel, Field
+from pydantic import field_validator
 from datetime import datetime
 from typing import Optional, List, Dict, Any
 from enum import Enum
@@ -7,10 +8,10 @@ from enum import Enum
 # ===== БАЗОВЫЕ ENUMS =====
 
 class UserRoleEnum(str, Enum):
-    STUDENT = "student"
-    PARENT = "parent"
-    TEACHER = "teacher"
-    ADMIN = "admin"
+    STUDENT = "STUDENT"
+    PARENT = "PARENT"
+    TEACHER = "TEACHER"
+    ADMIN = "ADMIN"
 
 class StudentStatusEnum(str, Enum):
     ACTIVE = "active"
@@ -40,6 +41,7 @@ class BaseResponse(BaseModel):
     """Базовая схема ответа"""
     class Config:
         from_attributes = True
+        orm_mode = True  # Для совместимости со старыми версиями
 
 class PaginatedResponse(BaseModel):
     """Схема для пагинированных ответов"""
@@ -52,31 +54,44 @@ class PaginatedResponse(BaseModel):
 # ===== USER СХЕМЫ =====
 
 class UserBase(BaseModel):
-    name: str = Field(..., max_length=100)
-    surname: str = Field(..., max_length=100)
-    phone: str = Field(..., max_length=20)
-    email: Optional[str] = Field(None, max_length=150)
-    photo: Optional[str] = Field(None, max_length=255)
+    name: str = Field(..., max_length=100, description="Имя пользователя")
+    surname: str = Field(..., max_length=100, description="Фамилия пользователя")
+    phone: str = Field(..., max_length=20, description="Номер телефона")
+    email: Optional[str] = Field(None, max_length=150, description="Email адрес")
+    photo: Optional[str] = Field(None, max_length=255, description="URL фотографии")
 
 class UserCreate(UserBase):
-    password: str = Field(..., min_length=6)
-    role: UserRoleEnum
+    password: str = Field(..., min_length=6, description="Пароль (минимум 6 символов)")
+    role: UserRoleEnum = Field(..., description="Роль пользователя")
     # Дополнительные поля для студентов
-    direction: Optional[str] = None
-    group_id: Optional[int] = None
-    goal: Optional[str] = None
+    direction: Optional[str] = Field(None, description="Направление обучения (для студентов)")
+    group_id: Optional[int] = Field(None, description="ID группы (для студентов)")
+    goal: Optional[str] = Field(None, description="Цель обучения (для студентов)")
     # Дополнительные поля для учителей
-    teacher_schedule: Optional[str] = None
+    teacher_schedule: Optional[str] = Field(None, description="Расписание учителя")
     # Дополнительные поля для администраторов
-    admin_schedule: Optional[str] = None
+    admin_schedule: Optional[str] = Field(None, description="Расписание администратора")
 
 class UserResponse(UserBase, BaseResponse):
     user_id: int
     role: UserRoleEnum
-    is_active: bool
+    is_active: bool = True
     registration_date: datetime
     created_at: datetime
     updated_at: datetime
+
+    class Config:
+        from_attributes = True
+        orm_mode = True
+        
+    @field_validator("role", mode="before")
+    def _cast_role(cls, v):
+        # если пришёл любой Enum — берём его .value или .name
+        import enum
+        if isinstance(v, enum.Enum):
+            # v.name == 'STUDENT'; v.value == 'student' (в вашем случае)
+            return v.name  # или v.value.upper()
+        return v
 
 class UserUpdate(BaseModel):
     name: Optional[str] = Field(None, max_length=100)
@@ -87,14 +102,14 @@ class UserUpdate(BaseModel):
 # ===== AUTH СХЕМЫ =====
 
 class Token(BaseModel):
-    access_token: str
-    token_type: str
-    user_id: int
-    role: str
+    access_token: str = Field(..., description="JWT токен доступа")
+    token_type: str = Field(default="bearer", description="Тип токена")
+    user_id: int = Field(..., description="ID пользователя")
+    role: str = Field(..., description="Роль пользователя")
 
 class UserLogin(BaseModel):
-    phone: str
-    password: str
+    phone: str = Field(..., description="Номер телефона")
+    password: str = Field(..., description="Пароль")
 
 # ===== STUDENT СХЕМЫ =====
 
@@ -113,7 +128,7 @@ class StudentUpdate(BaseModel):
 class StudentResponse(StudentBase, BaseResponse):
     student_id: int
     student_status: StudentStatusEnum
-    last_login: Optional[datetime]
+    last_login: Optional[datetime] = None
 
 class StudentInfoBase(BaseModel):
     hobby: Optional[str] = Field(None, max_length=500)

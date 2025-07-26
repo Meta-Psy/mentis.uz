@@ -44,7 +44,7 @@ async def get_users(
             user_data = AdminUserResponse.from_orm(user)
             
             # Добавляем роль-специфичную информацию
-            if user.role == UserRoleEnum.STUDENT and user.student:
+            if user.role == UserRoleEnum.STUDENT.value and user.student:
                 user_data.role_info = {
                     "direction": user.student.direction,
                     "group_id": user.student.group_id,

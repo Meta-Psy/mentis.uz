@@ -7,6 +7,9 @@ class Settings(BaseSettings):
     database_password: str
     database_name: str
     debug: bool = False
+    secret_key: str 
+    algorithm: str = "HS256"
+    access_token_expire_minutes: int = 60 
 
     @property
     def database_url(self) -> str:

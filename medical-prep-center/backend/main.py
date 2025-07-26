@@ -22,18 +22,37 @@ from app.api.admin import admin_router
 
 # Импорт базы данных
 from app.database import init_db, close_db
+import os
+import sys
+# Настройка логирования
+if os.name == 'nt':
+    import ctypes
+    ctypes.windll.kernel32.SetConsoleOutputCP(65001)
+
+class UTF8StreamHandler(logging.StreamHandler):
+    def __init__(self, stream=None):
+        if stream is None:
+            stream = open(sys.stdout.fileno(), mode='w', encoding='utf-8', buffering=1)
+        super().__init__(stream)
 
 # Настройка логирования
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-    handlers=[
-        logging.FileHandler("app.log"),
-        logging.StreamHandler()
-    ]
-)
-
 logger = logging.getLogger(__name__)
+logger.setLevel(logging.INFO)
+
+# Файл с utf-8
+file_handler = logging.FileHandler("app.log", encoding="utf-8")
+
+# Консоль с utf-8
+console_handler = UTF8StreamHandler()
+
+formatter = logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s")
+file_handler.setFormatter(formatter)
+console_handler.setFormatter(formatter)
+
+logger.handlers.clear()
+logger.addHandler(file_handler)
+logger.addHandler(console_handler)
+
 
 # Lifespan manager для управления подключениями
 @asynccontextmanager
@@ -197,7 +216,7 @@ app.include_router(
 # НОВЫЙ: Роутер для админки
 app.include_router(
     admin_router,
-    prefix="/api",  # admin_router уже содержит /admin в prefix
+    prefix="/api",
     tags=["Admin Panel"],
     responses={
         401: {"description": "Требуется авторизация администратора"},
@@ -238,7 +257,7 @@ async def api_root():
             "teacher_dashboard": "/api/teacher",
             "materials": "/api/materials",
             "auth": "/api/auth",
-            "admin": "/api/admin"  # НОВЫЙ эндпоинт
+            "admin": "/api/admin"
         },
         "admin_endpoints": {
             "dashboard": "/api/admin/dashboard",
@@ -272,7 +291,7 @@ async def health_check():
             "statistics": "healthy",
             "materials": "healthy",
             "auth": "healthy",
-            "admin": "healthy"  # НОВЫЙ компонент
+            "admin": "healthy" 
         }
     }
 
@@ -290,9 +309,9 @@ async def api_info():
             "Дашборды для родителей, студентов и учителей",
             "Управление учебными материалами",
             "Аутентификация и авторизация",
-            "Административная панель управления"  # НОВАЯ функция
+            "Административная панель управления"  
         ],
-        "admin_features": [  # НОВЫЙ раздел
+        "admin_features": [  
             "Управление пользователями",
             "Управление контентом (предметы, разделы, темы, вопросы)",
             "Управление университетами и группами",

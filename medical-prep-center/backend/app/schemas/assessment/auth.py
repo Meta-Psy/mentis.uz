@@ -4,10 +4,10 @@ from typing import Optional, Dict, Any, List
 from enum import Enum
 
 class UserRoleEnum(str, Enum):
-    STUDENT = "student"
-    PARENT = "parent" 
-    TEACHER = "teacher"
-    ADMIN = "admin"
+    STUDENT = "STUDENT"
+    PARENT = "PARENT" 
+    TEACHER = "TEACHER"
+    ADMIN = "ADMIN"
 
 class LoginRequest(BaseModel):
     """Запрос первого этапа авторизации"""

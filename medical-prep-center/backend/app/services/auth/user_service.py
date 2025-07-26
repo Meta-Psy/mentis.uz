@@ -1,7 +1,9 @@
 from datetime import datetime
 from typing import List, Optional
 from fastapi import HTTPException, status
-from sqlalchemy import or_, and_, select, func
+from sqlalchemy import or_, and_, select, func, update
+from datetime import datetime
+from sqlalchemy.orm import selectinload
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.database.models.user import (
     User,
@@ -12,7 +14,7 @@ from app.database.models.user import (
     ParentInfo,
     StudentStatus,
     TeacherStatus,
-    AdminStatus,
+    AdminStatus
 )
 
 # ===========================================
@@ -260,21 +262,23 @@ async def search_users_db(db: AsyncSession, search_query: str) -> List[User]:
 
 
 async def update_last_login_time_db(db: AsyncSession, user_id: int) -> User:
-    """Обновление времени последнего входа"""
-
-    result = await db.execute(select(User).filter(User.user_id == user_id))
+    """Обновление времени последнего входа с eager-загрузкой student."""
+    result = await db.execute(
+        select(User)
+        .options(selectinload(User.student))
+        .where(User.user_id == user_id)
+    )
     user = result.scalar_one_or_none()
     if not user:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND, detail="Пользователь не найден"
-        )
-
-    # Обновляем время последнего входа в зависимости от роли
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Пользователь не найден")
+    now = datetime.now()
+    user.updated_at = now
     if user.role == UserRole.STUDENT and user.student:
-        user.student.last_login = datetime.now()
+        user.student.last_login = now
 
-    user.updated_at = datetime.now()
+    # 3. Фиксим изменения
     await db.commit()
+    # 4. Обновляем из БД, чтобы вернуть свежий объект
     await db.refresh(user)
     return user
 

@@ -7,10 +7,10 @@ from enum import Enum
 # ========== ТИПЫ И КОНСТАНТЫ ==========
 
 class UserRoleEnum(str, Enum):
-    STUDENT = "student"
-    PARENT = "parent" 
-    TEACHER = "teacher"
-    ADMIN = "admin"
+    STUDENT = "STUDENT"
+    PARENT = "PARENT" 
+    TEACHER = "TEACHER"
+    ADMIN = "ADMIN"
 
 class StudentStatusEnum(str, Enum):
     ACTIVE = "active"

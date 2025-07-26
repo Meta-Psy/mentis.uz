@@ -6,10 +6,10 @@ from app.services.auth.student_service import *
 from app.services.assessment.grade_service import *
 from app.services.assessment.attendance_service import *
 from app.services.assessment.comment_service import *
-from app.schemas.auth.student import *
-from app.core.dependencies import get_current_user, require_roles
+from app.schemas.auth.admin import *
+from app.database import get_current_user
 from app.database.models.user import UserRole
-from app.schemas import StudentProfileResponse, StudentResponse, StudentUpdate, TestHistoryResponse, CommentResponse
+from app.schemas.base import StudentProfileResponse, StudentResponse, StudentUpdate, TestHistoryResponse, CommentResponse
 
 router = APIRouter()
 

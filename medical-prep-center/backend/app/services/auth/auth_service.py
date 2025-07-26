@@ -5,7 +5,7 @@ from fastapi import Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from passlib.context import CryptContext
-import jwt
+from jose import jwt
 from app.database.models.user import User, Student, ParentInfo, UserRole
 from app.config.database import settings
 from app.database import get_db
@@ -13,7 +13,7 @@ from fastapi.security import OAuth2PasswordBearer
 from app.database.models.user import User
 
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
-oauth2_scheme = OAuth2PasswordBearer(tokenUrl="auth/login")
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/auth/login")
 
 class AuthService:
     
@@ -34,10 +34,10 @@ class AuthService:
         if expires_delta:
             expire = datetime.utcnow() + expires_delta
         else:
-            expire = datetime.utcnow() + timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
+            expire = datetime.utcnow() + timedelta(minutes=settings.access_token_expire_minutes)
         
         to_encode.update({"exp": expire})
-        encoded_jwt = jwt.encode(to_encode, settings.SECRET_KEY, algorithm=settings.ALGORITHM)
+        encoded_jwt = jwt.encode(to_encode, settings.secret_key, algorithm=settings.algorithm)
         return encoded_jwt
     
     @staticmethod
@@ -166,7 +166,7 @@ class AuthService:
     def decode_token(token: str) -> Dict[str, Any]:
         """Декодирование JWT токена"""
         try:
-            payload = jwt.decode(token, settings.SECRET_KEY, algorithms=[settings.ALGORITHM])
+            payload = jwt.decode(token, settings.secret_key, algorithms=[settings.algorithm])
             return payload
         except jwt.PyJWTError:
             raise HTTPException(
@@ -175,7 +175,7 @@ class AuthService:
             )
             
     @staticmethod
-    def get_current_user_dependency(
+    async def get_current_user_dependency(
         token: str = Depends(oauth2_scheme),
         db: AsyncSession = Depends(get_db)
     ) -> User:
@@ -194,7 +194,8 @@ class AuthService:
                 detail="Невозможно декодировать токен"
             )
 
-        user = db.query(User).filter(User.user_id == int(user_id)).first()
+        result = await db.execute(select(User).filter(User.user_id == int(user_id)))
+        user = result.scalar_one_or_none()
         if user is None:
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
