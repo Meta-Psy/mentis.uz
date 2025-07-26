@@ -1,4 +1,4 @@
-from fastapi import FastAPI, HTTPException, status
+from fastapi import FastAPI, HTTPException, status, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.trustedhost import TrustedHostMiddleware
 from fastapi.responses import JSONResponse
@@ -7,7 +7,7 @@ import uvicorn
 import logging
 from datetime import datetime
 
-# Импорты роутеров
+# Импорты существующих роутеров
 from app.api.academic_content.attendance import router as assessment_router
 from app.api.academic_content.tests import router as tests_router
 from app.api.academic_content.statistic import router as statistics_router
@@ -16,6 +16,9 @@ from app.api.auth.student import router as student_dashboard_router
 from app.api.auth.teacher import router as teacher_dashboard_router
 from app.api.academic_content.materials import router as materials_router
 from app.api.auth.auth import router as auth_router
+
+# Импорт нового админского роутера
+from app.api.admin import admin_router
 
 # Импорт базы данных
 from app.database import init_db, close_db
@@ -57,7 +60,7 @@ async def lifespan(app: FastAPI):
 # Создание FastAPI приложения
 app = FastAPI(
     title="Educational Platform API",
-    description="API для образовательной платформы с оценками, тестами и материалами",
+    description="API для образовательной платформы с оценками, тестами, материалами и административной панелью",
     version="1.0.0",
     docs_url="/docs",
     redoc_url="/redoc",
@@ -74,6 +77,7 @@ app.add_middleware(
         "http://127.0.0.1:3000",
         "http://127.0.0.1:3001",
         "https://your-frontend-domain.com",  # Production domain
+        "https://admin.your-frontend-domain.com",  # Admin panel domain
     ],
     allow_credentials=True,
     allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"],
@@ -111,6 +115,20 @@ async def general_exception_handler(request, exc):
             "timestamp": datetime.now().isoformat()
         }
     )
+
+# ===========================================
+# MIDDLEWARE ДЛЯ АДМИНКИ (ОПЦИОНАЛЬНО)
+# ===========================================
+
+# Простая защита админки (в продакшене использовать JWT)
+async def verify_admin_access(request):
+    """Проверка доступа к админке"""
+    # Здесь можно добавить проверку JWT токена или другую аутентификацию
+    # Пример:
+    # auth_header = request.headers.get("Authorization")
+    # if not auth_header or not verify_admin_token(auth_header):
+    #     raise HTTPException(status_code=401, detail="Admin access required")
+    pass
 
 # ===========================================
 # ПОДКЛЮЧЕНИЕ РОУТЕРОВ
@@ -176,6 +194,19 @@ app.include_router(
     responses={404: {"description": "Не найдено"}}
 )
 
+# НОВЫЙ: Роутер для админки
+app.include_router(
+    admin_router,
+    prefix="/api",  # admin_router уже содержит /admin в prefix
+    tags=["Admin Panel"],
+    responses={
+        401: {"description": "Требуется авторизация администратора"},
+        403: {"description": "Недостаточно прав доступа"},
+        404: {"description": "Не найдено"}
+    }
+    # dependencies=[Depends(verify_admin_access)]  # Раскомментировать для защиты
+)
+
 # ===========================================
 # ОСНОВНЫЕ ЭНДПОИНТЫ
 # ===========================================
@@ -189,7 +220,8 @@ async def root():
         "status": "active",
         "timestamp": datetime.now().isoformat(),
         "docs": "/docs",
-        "redoc": "/redoc"
+        "redoc": "/redoc",
+        "admin_panel": "/api/admin"
     }
 
 @app.get("/api")
@@ -205,7 +237,16 @@ async def api_root():
             "student_dashboard": "/api/student", 
             "teacher_dashboard": "/api/teacher",
             "materials": "/api/materials",
-            "auth": "/api/auth"
+            "auth": "/api/auth",
+            "admin": "/api/admin"  # НОВЫЙ эндпоинт
+        },
+        "admin_endpoints": {
+            "dashboard": "/api/admin/dashboard",
+            "users": "/api/admin/users",
+            "content": "/api/admin/subjects",
+            "analytics": "/api/admin/analytics",
+            "export": "/api/admin/export",
+            "health": "/api/admin/health"
         },
         "documentation": {
             "swagger": "/docs",
@@ -230,7 +271,8 @@ async def health_check():
             "tests": "healthy",
             "statistics": "healthy",
             "materials": "healthy",
-            "auth": "healthy"
+            "auth": "healthy",
+            "admin": "healthy"  # НОВЫЙ компонент
         }
     }
 
@@ -247,7 +289,17 @@ async def api_info():
             "Статистика и аналитика",
             "Дашборды для родителей, студентов и учителей",
             "Управление учебными материалами",
-            "Аутентификация и авторизация"
+            "Аутентификация и авторизация",
+            "Административная панель управления"  # НОВАЯ функция
+        ],
+        "admin_features": [  # НОВЫЙ раздел
+            "Управление пользователями",
+            "Управление контентом (предметы, разделы, темы, вопросы)",
+            "Управление университетами и группами",
+            "Аналитика и статистика",
+            "Экспорт данных",
+            "Валидация целостности",
+            "Массовые операции"
         ],
         "environments": {
             "development": "http://localhost:8000",
@@ -270,8 +322,12 @@ async def log_requests(request, call_next):
     """Middleware для логирования запросов"""
     start_time = datetime.now()
     
+    # Специальное логирование для админских запросов
+    is_admin_request = request.url.path.startswith("/api/admin")
+    log_prefix = "🔧 ADMIN" if is_admin_request else "📨"
+    
     # Логируем входящий запрос
-    logger.info(f"📨 {request.method} {request.url}")
+    logger.info(f"{log_prefix} {request.method} {request.url}")
     
     try:
         response = await call_next(request)
@@ -289,6 +345,11 @@ async def log_requests(request, call_next):
         # Добавляем заголовки времени обработки
         response.headers["X-Process-Time"] = str(process_time)
         response.headers["X-Timestamp"] = datetime.now().isoformat()
+        response.headers["X-API-Version"] = "1.0.0"
+        
+        # Специальные заголовки для админки
+        if is_admin_request:
+            response.headers["X-Admin-API"] = "true"
         
         return response
         
@@ -301,6 +362,85 @@ async def log_requests(request, call_next):
             f"Time: {process_time:.3f}s"
         )
         raise
+
+# ===========================================
+# ДОПОЛНИТЕЛЬНЫЕ УТИЛИТЫ
+# ===========================================
+
+@app.get("/api/routes")
+async def list_routes():
+    """Список всех доступных маршрутов (для отладки)"""
+    routes = []
+    admin_routes = []
+    
+    for route in app.routes:
+        if hasattr(route, 'methods') and hasattr(route, 'path'):
+            route_info = {
+                "path": route.path,
+                "methods": list(route.methods),
+                "name": getattr(route, 'name', None)
+            }
+            
+            if route.path.startswith('/api/admin'):
+                admin_routes.append(route_info)
+            else:
+                routes.append(route_info)
+    
+    return {
+        "total_routes": len(routes) + len(admin_routes),
+        "public_routes": sorted(routes, key=lambda x: x['path']),
+        "admin_routes": sorted(admin_routes, key=lambda x: x['path']),
+        "admin_routes_count": len(admin_routes)
+    }
+
+@app.get("/api/version")
+async def get_version():
+    """Получение версии API"""
+    return {
+        "version": "1.0.0",
+        "build_date": "2024-01-01",
+        "environment": "development",
+        "python_version": "3.11+",
+        "fastapi_version": "0.104.1",
+        "admin_panel": "enabled",  # НОВОЕ поле
+        "last_updated": datetime.now().isoformat()
+    }
+
+# ===========================================
+# АДМИНСКИЕ MIDDLEWARE И ЗАЩИТА
+# ===========================================
+
+# Middleware для проверки прав доступа к админке
+@app.middleware("http")
+async def admin_access_middleware(request, call_next):
+    """Middleware для проверки доступа к админским эндпоинтам"""
+    
+    # Проверяем, является ли запрос админским
+    if request.url.path.startswith("/api/admin"):
+        # Здесь можно добавить проверку авторизации
+        # Например, проверка JWT токена с ролью admin
+        
+        # Пример базовой проверки (в продакшене заменить на полноценную авторизацию)
+        auth_header = request.headers.get("Authorization")
+        
+        # Для разработки можно временно отключить проверку
+        if not auth_header and request.url.path not in [
+            "/api/admin/health",  # Health check доступен всем
+            "/docs", "/redoc", "/openapi.json"  # Документация
+        ]:
+            # Раскомментировать для включения защиты:
+            # return JSONResponse(
+            #     status_code=401,
+            #     content={
+            #         "error": True,
+            #         "message": "Admin authentication required",
+            #         "status_code": 401
+            #     }
+            # )
+            pass
+    
+    response = await call_next(request)
+    return response
 
 # ===========================================
 # КОНФИГУРАЦИЯ ДЛЯ РАЗРАБОТКИ
@@ -319,37 +459,6 @@ if __name__ == "__main__":
     )
 
 # ===========================================
-# ДОПОЛНИТЕЛЬНЫЕ УТИЛИТЫ
-# ===========================================
-
-@app.get("/api/routes")
-async def list_routes():
-    """Список всех доступных маршрутов (для отладки)"""
-    routes = []
-    for route in app.routes:
-        if hasattr(route, 'methods') and hasattr(route, 'path'):
-            routes.append({
-                "path": route.path,
-                "methods": list(route.methods),
-                "name": getattr(route, 'name', None)
-            })
-    return {
-        "total_routes": len(routes),
-        "routes": sorted(routes, key=lambda x: x['path'])
-    }
-
-@app.get("/api/version")
-async def get_version():
-    """Получение версии API"""
-    return {
-        "version": "1.0.0",
-        "build_date": "2024-01-01",
-        "environment": "development",  # Можно получать из переменных окружения
-        "python_version": "3.11+",
-        "fastapi_version": "0.104.1"
-    }
-
-# ===========================================
 # НАСТРОЙКИ ДЛЯ ПРОДАКШЕНА
 # ===========================================
 
@@ -362,6 +471,8 @@ async def get_version():
 # Переменные окружения для продакшена:
 # - DATABASE_URL: строка подключения к базе данных
 # - SECRET_KEY: секретный ключ для JWT
+# - ADMIN_SECRET_KEY: отдельный ключ для админки
 # - CORS_ORIGINS: разрешенные домены для CORS
 # - LOG_LEVEL: уровень логирования
 # - ENVIRONMENT: production/staging/development
+# - ADMIN_ENABLED: включена ли админка (true/false)

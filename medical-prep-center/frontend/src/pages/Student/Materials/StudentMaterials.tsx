@@ -1,7 +1,7 @@
-import { 
-  FlaskConical, 
-  Microscope, 
-  ChevronDown, 
+import {
+  FlaskConical,
+  Microscope,
+  ChevronDown,
   ChevronUp,
   Download,
   FileText,
@@ -11,10 +11,14 @@ import {
   Video,
   Loader2,
   AlertCircle,
-  RefreshCw
-} from 'lucide-react';
-import { useMaterialsPage } from '../../../hooks/useMaterials';
-import type { DownloadableFile, Topic, Section } from '../../../services/api/materials';
+  RefreshCw,
+} from "lucide-react";
+import { useMaterialsPage } from "../../../hooks/useMaterials";
+import type {
+  DownloadableFile,
+  Topic,
+  Section,
+} from "../../../services/api/materials";
 
 const StudentMaterials = () => {
   const {
@@ -31,11 +35,17 @@ const StudentMaterials = () => {
     handleBackToModules,
     handleAllModules,
     handleRefresh,
-    toggleSection
+    toggleSection,
   } = useMaterialsPage();
 
   // Компонент ошибки
-  const ErrorMessage = ({ error, onRetry }: { error: string; onRetry: () => void }) => (
+  const ErrorMessage = ({
+    error,
+    onRetry,
+  }: {
+    error: string;
+    onRetry: () => void;
+  }) => (
     <div className="bg-red-50 border border-red-200 p-4 lg:p-6 text-center">
       <AlertCircle className="w-8 h-8 text-red-500 mx-auto mb-2" />
       <p className="text-red-700 mb-4">{error}</p>
@@ -50,7 +60,11 @@ const StudentMaterials = () => {
   );
 
   // Компонент загрузки
-  const LoadingSpinner = ({ message = 'Загрузка...' }: { message?: string }) => (
+  const LoadingSpinner = ({
+    message = "Загрузка...",
+  }: {
+    message?: string;
+  }) => (
     <div className="flex items-center justify-center p-8 lg:p-12">
       <div className="text-center">
         <Loader2 className="w-8 h-8 text-primary-600 animate-spin mx-auto mb-2" />
@@ -75,12 +89,12 @@ const StudentMaterials = () => {
           </p>
         </div>
       </div>
-      <button 
+      <button
         onClick={() => {
           if (file.download_url) {
-            window.open(file.download_url, '_blank');
+            window.open(file.download_url, "_blank");
           } else {
-            console.log('Скачивание файла:', file.id);
+            console.log("Скачивание файла:", file.id);
           }
         }}
         className="flex items-center gap-2 px-3 lg:px-4 py-2 bg-primary-600 text-white text-xs lg:text-sm font-medium hover:bg-primary-700 transition-colors duration-200"
@@ -106,7 +120,13 @@ const StudentMaterials = () => {
   );
 
   // Компонент темы
-  const TopicCard = ({ topic, moduleId }: { topic: Topic; moduleId: number }) => {
+  const TopicCard = ({
+    topic,
+    moduleId,
+  }: {
+    topic: Topic;
+    moduleId: number;
+  }) => {
     const sectionId = `topic-${moduleId}-${topic.id}`;
     const isExpanded = uiState.expandedSections[sectionId];
 
@@ -125,7 +145,7 @@ const StudentMaterials = () => {
             <ChevronDown className="w-5 h-5 text-neutral-500" />
           )}
         </div>
-        
+
         {isExpanded && (
           <div className="border-t border-neutral-200 p-4 lg:p-6 space-y-6">
             {/* Домашнее задание */}
@@ -158,13 +178,21 @@ const StudentMaterials = () => {
 
             {/* Кнопка теста */}
             <div className="text-center lg:text-left">
-              <a
-                href={`/test/${topic.testId}/training`}
+              <button
+                onClick={() => {
+                  // Исправлено: используем правильный роутинг или обработчик
+                  // Вместо прямой ссылки используем обработчик
+                  console.log(
+                    `Переход к тесту ${topic.testId} для темы ${topic.id}`
+                  );
+                  // Здесь должна быть логика навигации к тесту
+                  window.location.href = `/test/${topic.testId}/training`;
+                }}
                 className="inline-flex items-center gap-2 px-6 py-3 bg-green-600 text-white font-medium hover:bg-green-700 transition-colors duration-200 text-sm lg:text-base"
               >
                 <Play className="w-4 h-4" />
                 Пройти тест
-              </a>
+              </button>
             </div>
           </div>
         )}
@@ -176,7 +204,7 @@ const StudentMaterials = () => {
   const ModuleContent = ({ module }: { module: Section }) => {
     const booksSectionId = `books-${module.id}`;
     const testBooksSectionId = `testBooks-${module.id}`;
-    
+
     return (
       <div className="space-y-6">
         {/* Актуальные материалы для обучения */}
@@ -191,7 +219,9 @@ const StudentMaterials = () => {
                 <h3 className="font-bold text-neutral-900 text-sm lg:text-base">
                   Актуальные материалы для обучения
                 </h3>
-                <span className="text-xs text-neutral-500">({module.books.length})</span>
+                <span className="text-xs text-neutral-500">
+                  ({module.books.length})
+                </span>
               </div>
               {uiState.expandedSections[booksSectionId] ? (
                 <ChevronUp className="w-5 h-5 text-neutral-500" />
@@ -199,7 +229,7 @@ const StudentMaterials = () => {
                 <ChevronDown className="w-5 h-5 text-neutral-500" />
               )}
             </div>
-            
+
             {uiState.expandedSections[booksSectionId] && (
               <div className="border-t border-neutral-200 p-4 lg:p-6 space-y-3">
                 {module.books.map((book) => (
@@ -222,7 +252,9 @@ const StudentMaterials = () => {
                 <h3 className="font-bold text-neutral-900 text-sm lg:text-base">
                   Актуальные сборники тестов
                 </h3>
-                <span className="text-xs text-neutral-500">({module.testBooks.length})</span>
+                <span className="text-xs text-neutral-500">
+                  ({module.testBooks.length})
+                </span>
               </div>
               {uiState.expandedSections[testBooksSectionId] ? (
                 <ChevronUp className="w-5 h-5 text-neutral-500" />
@@ -230,7 +262,7 @@ const StudentMaterials = () => {
                 <ChevronDown className="w-5 h-5 text-neutral-500" />
               )}
             </div>
-            
+
             {uiState.expandedSections[testBooksSectionId] && (
               <div className="border-t border-neutral-200 p-4 lg:p-6 space-y-3">
                 {module.testBooks.map((book) => (
@@ -275,7 +307,9 @@ const StudentMaterials = () => {
               disabled={isLoading}
               className="flex items-center gap-2 px-4 py-2 bg-neutral-200 text-neutral-700 hover:bg-neutral-300 disabled:opacity-50 transition-colors duration-200 text-sm lg:text-base"
             >
-              <RefreshCw className={`w-4 h-4 ${isLoading ? 'animate-spin' : ''}`} />
+              <RefreshCw
+                className={`w-4 h-4 ${isLoading ? "animate-spin" : ""}`}
+              />
               <span className="hidden sm:inline">Обновить</span>
             </button>
           </div>
@@ -284,25 +318,25 @@ const StudentMaterials = () => {
         {/* Выбор предмета */}
         <div className="flex flex-wrap justify-center gap-2 lg:gap-4 mb-6 lg:mb-8">
           <button
-            onClick={() => handleSubjectChange('chemistry')}
+            onClick={() => handleSubjectChange("chemistry")}
             disabled={isLoading}
             className={`flex items-center gap-2 px-4 lg:px-6 py-3 font-medium transition-all duration-200 text-sm lg:text-base disabled:opacity-50 ${
-              uiState.selectedSubject === 'chemistry'
-                ? 'bg-primary-600 text-white shadow-lg'
-                : 'bg-white text-neutral-700 hover:bg-neutral-100 border border-neutral-300'
+              uiState.selectedSubject === "chemistry"
+                ? "bg-primary-600 text-white shadow-lg"
+                : "bg-white text-neutral-700 hover:bg-neutral-100 border border-neutral-300"
             }`}
           >
             <FlaskConical className="w-4 h-4 lg:w-5 lg:h-5" />
             Химия
           </button>
-          
+
           <button
-            onClick={() => handleSubjectChange('biology')}
+            onClick={() => handleSubjectChange("biology")}
             disabled={isLoading}
             className={`flex items-center gap-2 px-4 lg:px-6 py-3 font-medium transition-all duration-200 text-sm lg:text-base disabled:opacity-50 ${
-              uiState.selectedSubject === 'biology'
-                ? 'bg-primary-600 text-white shadow-lg'
-                : 'bg-white text-neutral-700 hover:bg-neutral-100 border border-neutral-300'
+              uiState.selectedSubject === "biology"
+                ? "bg-primary-600 text-white shadow-lg"
+                : "bg-white text-neutral-700 hover:bg-neutral-100 border border-neutral-300"
             }`}
           >
             <Microscope className="w-4 h-4 lg:w-5 lg:h-5" />
@@ -311,9 +345,7 @@ const StudentMaterials = () => {
         </div>
 
         {/* Контент */}
-        {hasError && (
-          <ErrorMessage error={hasError} onRetry={handleRefresh} />
-        )}
+        {hasError && <ErrorMessage error={hasError} onRetry={handleRefresh} />}
 
         {isLoading && !currentData && (
           <LoadingSpinner message="Загрузка материалов..." />
@@ -366,30 +398,32 @@ const StudentMaterials = () => {
             )}
 
             {/* Содержимое выбранного модуля */}
-            {uiState.selectedModule && uiState.selectedModule !== 'all' && selectedModuleData && (
-              <div>
-                <div className="flex items-center gap-4 mb-6 lg:mb-8">
-                  <button
-                    onClick={handleBackToModules}
-                    className="px-4 py-2 bg-neutral-200 text-neutral-700 hover:bg-neutral-300 transition-colors duration-200 text-sm lg:text-base"
-                  >
-                    ← Назад
-                  </button>
-                  <h2 className="text-lg lg:text-xl font-bold text-neutral-900">
-                    {selectedModuleData.name}
-                  </h2>
-                  {selectedModuleData.description && (
-                    <span className="text-sm text-neutral-600">
-                      • {selectedModuleData.description}
-                    </span>
-                  )}
+            {uiState.selectedModule &&
+              uiState.selectedModule !== "all" &&
+              selectedModuleData && (
+                <div>
+                  <div className="flex items-center gap-4 mb-6 lg:mb-8">
+                    <button
+                      onClick={handleBackToModules}
+                      className="px-4 py-2 bg-neutral-200 text-neutral-700 hover:bg-neutral-300 transition-colors duration-200 text-sm lg:text-base"
+                    >
+                      ← Назад
+                    </button>
+                    <h2 className="text-lg lg:text-xl font-bold text-neutral-900">
+                      {selectedModuleData.name}
+                    </h2>
+                    {selectedModuleData.description && (
+                      <span className="text-sm text-neutral-600">
+                        • {selectedModuleData.description}
+                      </span>
+                    )}
+                  </div>
+                  <ModuleContent module={selectedModuleData} />
                 </div>
-                <ModuleContent module={selectedModuleData} />
-              </div>
-            )}
+              )}
 
             {/* Все модули */}
-            {uiState.selectedModule === 'all' && (
+            {uiState.selectedModule === "all" && (
               <div>
                 <div className="flex items-center gap-4 mb-6 lg:mb-8">
                   <button
@@ -399,14 +433,20 @@ const StudentMaterials = () => {
                     ← Назад
                   </button>
                   <h2 className="text-lg lg:text-xl font-bold text-neutral-900">
-                    Все модули • {uiState.selectedSubject === 'chemistry' ? 'Химия' : 'Биология'}
+                    Все модули •{" "}
+                    {uiState.selectedSubject === "chemistry"
+                      ? "Химия"
+                      : "Биология"}
                   </h2>
                 </div>
-                
+
                 {currentData.modules && currentData.modules.length > 0 ? (
                   <div className="space-y-8 lg:space-y-12">
                     {currentData.modules.map((module) => (
-                      <div key={module.id} className="border-b border-neutral-200 pb-8 last:border-b-0">
+                      <div
+                        key={module.id}
+                        className="border-b border-neutral-200 pb-8 last:border-b-0"
+                      >
                         <div className="flex items-center justify-between mb-4 lg:mb-6">
                           <h3 className="text-lg lg:text-xl font-bold text-primary-900">
                             {module.name}
@@ -440,9 +480,7 @@ const StudentMaterials = () => {
             <div className="w-16 h-16 bg-neutral-200 rounded-full flex items-center justify-center mx-auto mb-4">
               <BookOpen className="w-8 h-8 text-neutral-400" />
             </div>
-            <p className="text-neutral-600 mb-4">
-              Материалы пока не загружены
-            </p>
+            <p className="text-neutral-600 mb-4">Материалы пока не загружены</p>
             <button
               onClick={handleRefresh}
               className="inline-flex items-center gap-2 px-4 py-2 bg-primary-600 text-white hover:bg-primary-700 transition-colors duration-200"

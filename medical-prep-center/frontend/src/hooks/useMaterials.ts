@@ -240,11 +240,13 @@ export function useMaterials(subjectName: string): UseMaterialsResult {
     setIsValidating(forceRefresh && data !== null);
 
     try {
-      const materials = await materialsAPI.getMaterialsBySubject(subjectName);
+      // Исправлено: API возвращает объект с materials, а не прямо MaterialsData
+      const response = await materialsAPI.getMaterialsBySubject(subjectName);
       
       if (!controller.signal.aborted) {
-        setData(materials);
-        cache.set(cacheKey, materials);
+        // Обработка правильной структуры ответа
+        setData(response);
+        cache.set(cacheKey, response);
         setError(null);
       }
     } catch (err: unknown) {

@@ -93,6 +93,10 @@ export interface APIErrorInterface {
   message: string;
 }
 
+export interface MaterialsResponseModel {
+  materials: MaterialsData;
+}
+
 // ========== КОНФИГУРАЦИЯ ==========
 
 const getApiBaseUrl = (): string => {
@@ -280,7 +284,7 @@ export class MaterialsAPI {
     
     return retryRequest(async () => {
       try {
-        const response = await this.client.get<{ materials: MaterialsData }>(`/${normalizedSubject}`);
+        const response = await this.client.get<MaterialsResponseModel>(`/${normalizedSubject}`);
         return response.materials || {};
       } catch (error) {
         if (error instanceof MaterialsAPIError && error.status === 404) {

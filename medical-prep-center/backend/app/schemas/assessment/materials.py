@@ -101,13 +101,14 @@ class SubjectMaterialsResponse(BaseModel):
 class TopicDetailResponse(BaseModel):
     """Расширенная информация о теме"""
 
-    topic_id: int = Field(alias="id")
-    title: str = Field(alias="topic_name")
+    # Исправлены алиасы для соответствия с API и фронтендом
+    id: int = Field(alias="topic_id")
+    title: str = Field(alias="topic_name") 
     homework: List[str] = Field(default_factory=list)
     number: Optional[int] = Field(alias="topic_number")
     additional_material: Optional[str] = None
-    video_url: str = Field(default="https://www.youtube.com/embed/dQw4w9WgXcQ")
-    test_id: int = Field(alias="testId")
+    videoUrl: str = Field(default="https://www.youtube.com/embed/dQw4w9WgXcQ", alias="video_url")
+    testId: int = Field(alias="test_id")
     block_name: Optional[str] = None
     section_name: Optional[str] = None
     subject_name: Optional[str] = None
@@ -122,16 +123,18 @@ class TopicDetailResponse(BaseModel):
         if "homework" in data and isinstance(data["homework"], str):
             data["homework"] = data["homework"].split("\n") if data["homework"] else []
 
-        # Генерируем test_id если его нет
-        if "test_id" not in data and "testId" not in data and "topic_id" in data:
-            data["test_id"] = data["topic_id"] + 100
+        # Генерируем testId если его нет
+        if "test_id" not in data and "testId" not in data:
+            if "topic_id" in data:
+                data["testId"] = data["topic_id"] + 100
+            elif "id" in data:
+                data["testId"] = data["id"] + 100
 
         super().__init__(**data)
 
     class Config:
         from_attributes = True
         populate_by_name = True
-
 
 # ========== ЗАПРОСЫ ==========
 
