@@ -34,7 +34,7 @@ from app.services.content.section_service import (
 from app.services.content.subject_service import (
     get_all_subjects_db,
 )
-from app.services.auth.student_service import (
+from app.services.roles.student_service import (
     get_student_by_id_db
 )
 

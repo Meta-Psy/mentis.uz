@@ -23,7 +23,7 @@ from app.services.assessment.grade_service import (
     get_second_current_score_db,
     calculate_final_grade_db,
 )
-from app.services.auth.student_service import get_student_by_id_db
+from app.services.roles.student_service import get_student_by_id_db
 from app.services.content.subject_service import (
     get_all_subjects_db,
 )

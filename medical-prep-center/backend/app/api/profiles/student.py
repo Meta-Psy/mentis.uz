@@ -13,13 +13,13 @@ from app.database.models.assessment import (
 )
 
 # Импорты сервисов
-from app.services.auth.student_service import (
+from app.services.roles.student_service import (
     get_student_by_id_db,
     update_student_db,
     create_student_info_db,
     update_student_info_db
 )
-from app.services.auth.user_service import (
+from app.services.roles.user_service import (
     get_user_by_id_db
 )
 from app.services.assessment.grade_service import (

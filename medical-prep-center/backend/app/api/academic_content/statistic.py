@@ -25,7 +25,7 @@ from app.services.assessment.grade_service import (
 from app.services.assessment.attendance_service import (
     get_attendance_statistics_db
 )
-from app.services.auth.student_service import (
+from app.services.roles.student_service import (
     get_student_by_id_db,
     get_students_by_group_db
 )

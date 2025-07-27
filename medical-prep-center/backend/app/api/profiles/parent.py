@@ -32,11 +32,11 @@ from app.services.assessment.grade_service import (
     get_all_topic_scores_by_topic_db,
     get_avg_topic_score_for_student_db
 )
-from app.services.auth.student_service import (
+from app.services.roles.student_service import (
     get_student_by_id_db,
     get_students_by_group_db
 )
-from app.services.auth.user_service import (
+from app.services.roles.user_service import (
     get_user_by_id_db
 )
 from app.services.content.subject_service import (

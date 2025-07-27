@@ -3,10 +3,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from typing import List, Optional
 from app.database import get_db
 from app.schemas.auth.admin import *
-from app.services.auth.user_service import *
-from app.services.auth.student_service import *
-from app.services.auth.teacher_service import *
-from app.services.auth.admin_service import *
+from app.services.roles.user_service import *
+from app.services.roles.student_service import *
+from app.services.roles.teacher_service import *
+from app.services.roles.admin_service import *
 
 router = APIRouter()
 

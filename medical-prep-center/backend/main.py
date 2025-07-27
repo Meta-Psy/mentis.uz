@@ -6,18 +6,17 @@ from contextlib import asynccontextmanager
 import uvicorn
 import logging
 from datetime import datetime
+# from app.services.auth import verify_admin_token
 
 # Импорты существующих роутеров
 from app.api.academic_content.attendance import router as assessment_router
 from app.api.academic_content.tests import router as tests_router
 from app.api.academic_content.statistic import router as statistics_router
-from app.api.auth.parent import router as parent_dashboard_router
-from app.api.auth.student import router as student_dashboard_router
-from app.api.auth.teacher import router as teacher_dashboard_router
+from app.api.profiles.parent import router as parent_dashboard_router
+from app.api.profiles.student import router as student_dashboard_router
+from app.api.profiles.teacher import router as teacher_dashboard_router
 from app.api.academic_content.materials import router as materials_router
-from app.api.auth.auth import router as auth_router
-
-# Импорт нового админского роутера
+from app.api.auth import router as auth_router
 from app.api.admin import admin_router
 
 # Импорт базы данных
@@ -35,21 +34,15 @@ class UTF8StreamHandler(logging.StreamHandler):
             stream = open(sys.stdout.fileno(), mode='w', encoding='utf-8', buffering=1)
         super().__init__(stream)
 
-# Настройка логирования
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
-
-# Файл с utf-8
 file_handler = logging.FileHandler("app.log", encoding="utf-8")
-
-# Консоль с utf-8
-console_handler = UTF8StreamHandler()
-
 formatter = logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s")
 file_handler.setFormatter(formatter)
+console_handler = UTF8StreamHandler()
 console_handler.setFormatter(formatter)
-
 logger.handlers.clear()
+
 logger.addHandler(file_handler)
 logger.addHandler(console_handler)
 
@@ -76,7 +69,6 @@ async def lifespan(app: FastAPI):
         except Exception as e:
             logger.error(f"❌ Ошибка при завершении: {e}")
 
-# Создание FastAPI приложения
 app = FastAPI(
     title="Educational Platform API",
     description="API для образовательной платформы с оценками, тестами, материалами и административной панелью",
@@ -87,26 +79,24 @@ app = FastAPI(
     lifespan=lifespan
 )
 
-# Настройка CORS
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
-        "http://localhost:3000",  # React dev server
-        "http://localhost:3001",  # Alternative React port
+        "http://localhost:3000", 
+        "http://localhost:3001",
         "http://127.0.0.1:3000",
         "http://127.0.0.1:3001",
-        "https://your-frontend-domain.com",  # Production domain
-        "https://admin.your-frontend-domain.com",  # Admin panel domain
+        "https://mentis.uz", 
+        "https://admin.mentis.uz",  
     ],
     allow_credentials=True,
     allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"],
     allow_headers=["*"],
 )
 
-# Middleware для доверенных хостов
 app.add_middleware(
     TrustedHostMiddleware,
-    allowed_hosts=["localhost", "127.0.0.1", "*.your-domain.com"]
+    allowed_hosts=["localhost", "127.0.0.1", "*.mentis.uz"]
 )
 
 # Глобальный обработчик исключений
@@ -140,14 +130,12 @@ async def general_exception_handler(request, exc):
 # ===========================================
 
 # Простая защита админки (в продакшене использовать JWT)
-async def verify_admin_access(request):
-    """Проверка доступа к админке"""
-    # Здесь можно добавить проверку JWT токена или другую аутентификацию
-    # Пример:
-    # auth_header = request.headers.get("Authorization")
-    # if not auth_header or not verify_admin_token(auth_header):
-    #     raise HTTPException(status_code=401, detail="Admin access required")
-    pass
+# async def verify_admin_access(request):
+#     """Проверка доступа к админке"""
+   
+#     auth_header = request.headers.get("Authorization")
+#     if not auth_header or not verify_admin_token(auth_header):
+#         raise HTTPException(status_code=401, detail="Admin access required")
 
 # ===========================================
 # ПОДКЛЮЧЕНИЕ РОУТЕРОВ
@@ -205,7 +193,6 @@ app.include_router(
     responses={404: {"description": "Не найдено"}}
 )
 
-# Роутер для аутентификации
 app.include_router(
     auth_router,
     prefix="/api/auth",
@@ -213,7 +200,6 @@ app.include_router(
     responses={404: {"description": "Не найдено"}}
 )
 
-# НОВЫЙ: Роутер для админки
 app.include_router(
     admin_router,
     prefix="/api",
@@ -225,112 +211,6 @@ app.include_router(
     }
     # dependencies=[Depends(verify_admin_access)]  # Раскомментировать для защиты
 )
-
-# ===========================================
-# ОСНОВНЫЕ ЭНДПОИНТЫ
-# ===========================================
-
-@app.get("/")
-async def root():
-    """Корневой эндпоинт"""
-    return {
-        "message": "Educational Platform API",
-        "version": "1.0.0",
-        "status": "active",
-        "timestamp": datetime.now().isoformat(),
-        "docs": "/docs",
-        "redoc": "/redoc",
-        "admin_panel": "/api/admin"
-    }
-
-@app.get("/api")
-async def api_root():
-    """API корневой эндпоинт"""
-    return {
-        "message": "Educational Platform API v1.0.0",
-        "endpoints": {
-            "assessment": "/api/assessment",
-            "tests": "/api/tests",
-            "statistics": "/api/statistics",
-            "parent_dashboard": "/api/parent",
-            "student_dashboard": "/api/student", 
-            "teacher_dashboard": "/api/teacher",
-            "materials": "/api/materials",
-            "auth": "/api/auth",
-            "admin": "/api/admin"
-        },
-        "admin_endpoints": {
-            "dashboard": "/api/admin/dashboard",
-            "users": "/api/admin/users",
-            "content": "/api/admin/subjects",
-            "analytics": "/api/admin/analytics",
-            "export": "/api/admin/export",
-            "health": "/api/admin/health"
-        },
-        "documentation": {
-            "swagger": "/docs",
-            "redoc": "/redoc"
-        },
-        "status": "healthy",
-        "timestamp": datetime.now().isoformat()
-    }
-
-@app.get("/api/health")
-async def health_check():
-    """Общий health check для всего API"""
-    return {
-        "status": "healthy",
-        "service": "educational-platform-api",
-        "version": "1.0.0",
-        "timestamp": datetime.now().isoformat(),
-        "uptime": "active",
-        "components": {
-            "database": "healthy",
-            "assessment": "healthy",
-            "tests": "healthy",
-            "statistics": "healthy",
-            "materials": "healthy",
-            "auth": "healthy",
-            "admin": "healthy" 
-        }
-    }
-
-@app.get("/api/info")
-async def api_info():
-    """Информация об API"""
-    return {
-        "name": "Educational Platform API",
-        "version": "1.0.0",
-        "description": "API для образовательной платформы",
-        "features": [
-            "Система оценок и аттестации",
-            "Тестирование студентов",
-            "Статистика и аналитика",
-            "Дашборды для родителей, студентов и учителей",
-            "Управление учебными материалами",
-            "Аутентификация и авторизация",
-            "Административная панель управления"  
-        ],
-        "admin_features": [  
-            "Управление пользователями",
-            "Управление контентом (предметы, разделы, темы, вопросы)",
-            "Управление университетами и группами",
-            "Аналитика и статистика",
-            "Экспорт данных",
-            "Валидация целостности",
-            "Массовые операции"
-        ],
-        "environments": {
-            "development": "http://localhost:8000",
-            "staging": "https://staging-api.your-domain.com",
-            "production": "https://api.your-domain.com"
-        },
-        "contact": {
-            "email": "support@your-domain.com",
-            "documentation": "/docs"
-        },
-        "timestamp": datetime.now().isoformat()
-    }
 
 # ===========================================
 # MIDDLEWARE ДЛЯ ЛОГИРОВАНИЯ
@@ -412,18 +292,6 @@ async def list_routes():
         "admin_routes_count": len(admin_routes)
     }
 
-@app.get("/api/version")
-async def get_version():
-    """Получение версии API"""
-    return {
-        "version": "1.0.0",
-        "build_date": "2024-01-01",
-        "environment": "development",
-        "python_version": "3.11+",
-        "fastapi_version": "0.104.1",
-        "admin_panel": "enabled",  # НОВОЕ поле
-        "last_updated": datetime.now().isoformat()
-    }
 
 # ===========================================
 # АДМИНСКИЕ MIDDLEWARE И ЗАЩИТА
@@ -471,27 +339,8 @@ if __name__ == "__main__":
         "main:app",
         host="0.0.0.0",
         port=8000,
-        reload=True,  # Автоперезагрузка при изменениях
+        reload=True,
         log_level="info",
         access_log=True,
-        workers=1  # Для разработки используем 1 worker
+        workers=1  
     )
-
-# ===========================================
-# НАСТРОЙКИ ДЛЯ ПРОДАКШЕНА
-# ===========================================
-
-# Для продакшена используйте:
-# uvicorn main:app --host 0.0.0.0 --port 8000 --workers 4
-
-# Или с Gunicorn:
-# gunicorn main:app -w 4 -k uvicorn.workers.UvicornWorker --bind 0.0.0.0:8000
-
-# Переменные окружения для продакшена:
-# - DATABASE_URL: строка подключения к базе данных
-# - SECRET_KEY: секретный ключ для JWT
-# - ADMIN_SECRET_KEY: отдельный ключ для админки
-# - CORS_ORIGINS: разрешенные домены для CORS
-# - LOG_LEVEL: уровень логирования
-# - ENVIRONMENT: production/staging/development
-# - ADMIN_ENABLED: включена ли админка (true/false)

@@ -8,7 +8,7 @@ from app.database.models.assessment import Question
 from app.database.models.user import User, Student, Teacher, Admin
 from app.database.models.academic import Subject, Section, Block, Topic
 from app.schemas.auth.admin import *
-from app.services.auth.user_service import *
+from app.services.roles.user_service import *
 from app.database.models.assessment import Question
 from datetime import datetime, timedelta
 from app.database.models.assessment import TopicTest, DtmExam, Attendance, Comments
@@ -579,7 +579,7 @@ async def bulk_user_actions_db(db: AsyncSession, action: str, user_ids: List[int
                 
             elif action == "assign_group" and additional_data and "group_id" in additional_data:
                 # Назначение группы студентам
-                from app.services.auth.student_service import update_student_db
+                from app.services.roles.student_service import update_student_db
                 user = await get_user_by_id_db(db, user_id)
                 if user.role.value == "student":
                     await update_student_db(db, user_id, group_id=additional_data["group_id"])
@@ -871,7 +871,7 @@ async def export_users_to_csv_db(db: AsyncSession, role_filter: Optional[str] = 
 async def export_content_hierarchy_to_json_db(db: AsyncSession) -> str:
     """Экспорт иерархии контента в JSON"""
     
-    from app.services.auth.admin_service import get_content_hierarchy_db
+    from app.services.roles.admin_service import get_content_hierarchy_db
     
     hierarchy = await get_content_hierarchy_db(db)
     

@@ -11,12 +11,12 @@ from app.database.models.academic import Group, Subject
 from app.database.models.assessment import Comments, CommentType, Attendance, CurrentRating, TopicTest
 
 # Импорты сервисов
-from app.services.auth.teacher_service import (
+from app.services.roles.teacher_service import (
     get_teacher_by_id_db,
     get_teacher_info_db,
     get_teacher_subjects_db
 )
-from app.services.auth.student_service import (
+from app.services.roles.student_service import (
     get_students_by_group_db,
     get_student_by_id_db
 )
